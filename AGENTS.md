@@ -4,6 +4,7 @@ A single-page Budget Dashboard built with [VanJS](https://vanjs.org/), hosted on
 
 ## Repository Layout
 - `docs/index.html` — entire app: markup, inline CSS, and the inline ES module that holds all logic. This is the document root served by Live Server and (when configured) GitHub Pages.
+- `docs/js/van-1.6.0.min.js` — vendored VanJS runtime. Imported by `index.html` as `./js/van-1.6.0.min.js` so we never load JS from a CDN at runtime.
 - `docs/CNAME` — custom domain for GitHub Pages.
 - `.vscode/settings.json` — pins Live Server's root to `/docs`.
 - `AGENTS.md` — this file.
@@ -12,12 +13,12 @@ There is no `package.json`, bundler, or test runner. Edit `docs/index.html` dire
 
 ## Local Development
 - The recommended workflow is the VS Code Live Server extension; it is configured (via `.vscode/settings.json`) to serve from `docs/`.
-- Alternatively, serve the `docs/` directory over HTTP yourself (the inline module imports VanJS via `https://`, and `crypto.subtle` requires a secure context):
+- Alternatively, serve the `docs/` directory over HTTP yourself (the inline module imports VanJS as a relative `./js/van-1.6.0.min.js`, and `crypto.subtle` requires a secure context):
   ```bash
   python3 -m http.server 5500 --directory docs
   ```
 - Open `http://localhost:5500/`. There is no hot reload — refresh the page after edits.
-- The CSP `meta` tag allows scripts only from `'self'` and `https://cdn.jsdelivr.net`. If you add another CDN, update the CSP.
+- The CSP `meta` tag allows scripts and connections only from `'self'`. VanJS is vendored at `docs/js/van-1.6.0.min.js`; do not re-introduce CDN imports without auditing the supply-chain implications and updating the CSP.
 
 ## Architecture
 - **State**: VanJS `van.state` for `route`, `isUnlocked`, `authMode`, `hasEncrypted`, `config`, `data`, theme, and form fields. The derived session `sessionKey` / `sessionSalt` are module-scoped variables (never serialized).
@@ -57,7 +58,7 @@ There is no `package.json`, bundler, or test runner. Edit `docs/index.html` dire
 - Single file, inline styles. Keep selectors scoped via class names; avoid global tag rules beyond what already exists.
 - Dark mode via `body.dark`; new components must theme both modes.
 - All overlays close on Escape via the global `keydown` listener at the bottom of the script. New overlays should be added to that handler.
-- Plaid is currently a stub (`callPlaidSandbox` returns hardcoded transactions). **Never** wire a real Plaid secret directly into the browser — proxy through a server. Even though the secret is encrypted at rest in `plaidSecretEnc`, a compromised script in the page could still observe it during sync.
+- Plaid is currently a stub (`callPlaid` returns hardcoded transactions, ignoring `plaidApiBaseUrls[env]`). The Settings page exposes a `plaidEnv` selector (`sandbox` | `development` | `production`) which is persisted on `config` and passed to `callPlaid` at sync time. **Never** wire a real Plaid secret directly into the browser — proxy through a server. Even though the secret is encrypted at rest in `plaidSecretEnc`, a compromised script in the page could still observe it during sync.
 - Do not introduce build tooling or `npm` dependencies without a strong reason; the project's value proposition is "open the file and it works."
 
 ## Verifying Changes
