@@ -45,6 +45,18 @@
         padding: 0;
       }
 
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .welcome-inline {
+        font-size: 0.95rem;
+        font-weight: 600;
+        opacity: 0.8;
+      }
+
       .card {
         margin-top: 1rem;
         padding: 1.25rem;
@@ -177,6 +189,11 @@
         opacity: 0.75;
       }
 
+      .muted-small {
+        font-size: 0.8rem;
+        opacity: 0.7;
+      }
+
       .modal-backdrop {
         position: fixed;
         inset: 0;
@@ -217,6 +234,19 @@
         gap: 1rem;
       }
 
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .card-header-right {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
       .transactions {
         display: grid;
         gap: 0.75rem;
@@ -255,6 +285,43 @@
         background: rgba(120, 164, 255, 0.2);
         color: #cfe0ff;
       }
+
+      footer {
+        margin-top: 2.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.9rem;
+      }
+
+      body.dark footer {
+        border-top-color: rgba(255, 255, 255, 0.08);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .link-button {
+        background: none;
+        border: 0;
+        padding: 0;
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+        font-weight: 600;
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
@@ -263,7 +330,7 @@
     <script type="module">
       import van from "https://cdn.jsdelivr.net/gh/vanjs-org/van/public/van-1.6.0.min.js"
       
-      const { button, div, h1, h2, input, label, p, span } = van.tags;
+      const { a, button, div, footer, h1, h2, input, label, p, span } = van.tags;
       const createSvgElement = (tag, props, ...children) => {
         const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
         if (props) {
@@ -286,6 +353,8 @@
       const isDark = van.state(false);
       const storageKey = "budgetDashboardConfig";
       const dataKey = "budgetDashboardData";
+      const themeKey = "budgetDashboardTheme";
+      const route = van.state("dashboard");
 
       const loadConfig = () => {
         try {
@@ -309,6 +378,18 @@
         }
       };
 
+      const loadTheme = () => {
+        try {
+          return localStorage.getItem(themeKey) === "dark";
+        } catch (error) {
+          return false;
+        }
+      };
+
+      const saveTheme = (darkMode) => {
+        localStorage.setItem(themeKey, darkMode ? "dark" : "light");
+      };
+
       const saveData = (data) => {
         localStorage.setItem(dataKey, JSON.stringify(data));
       };
@@ -319,10 +400,25 @@
       const plaidClientId = van.state("");
       const plaidSecret = van.state("");
 
+      const applyTheme = (darkMode) => {
+        document.body.classList.toggle("dark", darkMode);
+      };
+
+      isDark.val = loadTheme();
+      applyTheme(isDark.val);
+
       const toggleTheme = () => {
         isDark.val = !isDark.val;
-        document.body.classList.toggle("dark", isDark.val);
+        applyTheme(isDark.val);
+        saveTheme(isDark.val);
       };
+
+      const syncRouteFromHash = () => {
+        route.val = window.location.hash === "#about" ? "about" : "dashboard";
+      };
+
+      syncRouteFromHash();
+      window.addEventListener("hashchange", syncRouteFromHash);
 
       const openSettings = () => {
         const current = config.val;
@@ -438,25 +534,29 @@
         )
       );
 
-      const header = div(
+      const header = () => div(
         { class: "toolbar" },
         h1("Live Budget Dashboard"),
-        button(
-          {
-            class: "icon-button",
-            type: "button",
-            onclick: openSettings,
-            "aria-label": "Open settings"
-          },
-          svg.svg(
-            { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
-            svg.path({
-              d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
-              stroke: "currentColor",
-              "stroke-width": "1.5",
-              "stroke-linecap": "round",
-              "stroke-linejoin": "round"
-            })
+        div(
+          { class: "header-actions" },
+          config.val ? span({ class: "welcome-inline" }, `Welcome, ${config.val.firstName}!`) : null,
+          button(
+            {
+              class: "icon-button",
+              type: "button",
+              onclick: openSettings,
+              "aria-label": "Open settings"
+            },
+            svg.svg(
+              { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+              svg.path({
+                d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
+                stroke: "currentColor",
+                "stroke-width": "1.5",
+                "stroke-linecap": "round",
+                "stroke-linejoin": "round"
+              })
+            )
           )
         )
       );
@@ -466,20 +566,24 @@
             { class: "grid" },
             div(
               { class: "card stack" },
-              h2(`Welcome, ${config.val.firstName}!`),
-              p("Your budget data and Plaid credentials are saved locally."),
-              p({ class: "muted" }, "Sandbox: generate a sample Plaid sync and transactions list."),
-              button(
-                { class: "primary", type: "button", onclick: connectPlaidSandbox },
-                data.val.transactions.length ? "Refresh sample sync" : "Connect Plaid (sandbox)"
+              div(
+                { class: "card-header" },
+                h2("Recent transactions"),
+                div(
+                  { class: "card-header-right" },
+                  data.val.lastSync
+                    ? span({ class: "muted-small" }, `Last sync: ${new Date(data.val.lastSync).toLocaleString()}`)
+                    : null,
+                  button(
+                    {
+                      class: "link-button",
+                      type: "button",
+                      onclick: connectPlaidSandbox
+                    },
+                    "Sync now"
+                  )
+                )
               ),
-              data.val.lastSync
-                ? p({ class: "muted" }, `Last sync: ${new Date(data.val.lastSync).toLocaleString()}`)
-                : null
-            ),
-            div(
-              { class: "card stack" },
-              h2("Recent transactions"),
               data.val.transactions.length
                 ? div(
                     { class: "transactions" },
@@ -509,12 +613,32 @@
             button({ class: "primary", type: "button", onclick: openSettings }, "Open settings")
           );
 
+      const aboutPage = () => div(
+        { class: "card stack" },
+        h2("About this page"),
+        p("This is a single-page VanJS app hosted on GitHub Pages."),
+        p("It stores configuration and sample budget data in localStorage for a fully static experience."),
+        p("Routing is handled with URL hashes so refreshing keeps the current view.")
+      );
+
+      const mainContent = () => route.val === "about" ? aboutPage() : dashboard();
+
+      const pageFooter = () => footer(
+        div("© Cogitatio LLC 2026"),
+        div(
+          route.val === "about"
+            ? a({ href: "#/" }, "Back to dashboard")
+            : a({ href: "#about" }, "About this page")
+        )
+      );
+
       van.add(
         app,
         div(
           { class: "container" },
-          header,
-          dashboard
+          () => header(),
+          () => mainContent(),
+          pageFooter
         ),
         settingsModal
       );
