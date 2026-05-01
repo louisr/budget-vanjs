@@ -15,7 +15,7 @@ there. Steps are intentionally narrow so an issue can be pinpointed.
 ## 1. Landing page (no vault) — `#/`
 
 **Expected UI**
-- Header: title "Live Budget Dashboard" only (no settings gear, no welcome).
+- Header: title "Offline Budget Dashboard" only (no settings gear, no welcome).
 - Card "Get started":
   - Paragraph: "Create a new dashboard or restore an encrypted backup."
   - Buttons: **Create a new dashboard** (primary), **Restore a dashboard** (secondary).

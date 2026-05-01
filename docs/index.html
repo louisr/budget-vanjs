@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://cdn.jsdelivr.net; base-uri 'self'; form-action 'self'">
-    <title>Live Budget Dashboard</title>
-    <meta name="description" content="Live Budget Dashboard with VanJS and local storage config.">
+    <title>Offline Budget Dashboard</title>
+    <meta name="description" content="Offline Budget Dashboard with VanJS and local storage config.">
     <style>
       :root {
         color-scheme: light dark;
@@ -1219,7 +1219,7 @@
 
       const header = () => div(
         { class: "toolbar" },
-        h1("Live Budget Dashboard"),
+        h1("Offline Budget Dashboard"),
         div(
           { class: "header-actions" },
           config.val ? span({ class: "welcome-inline" }, `Welcome, ${config.val.firstName}!`) : null,
@@ -1329,9 +1329,24 @@
       const aboutPage = () => div(
         { class: "card stack" },
         h2("About this page"),
-        p("This is a single-page VanJS app hosted on GitHub Pages."),
-        p("It stores configuration and sample budget data in localStorage for a fully static experience."),
-        p("Routing is handled with URL hashes so refreshing keeps the current view.")
+        p("Offline Budget Dashboard is a small, single-page web app for keeping an eye on your day-to-day finances. It is built with VanJS and hosted on GitHub Pages as a single static HTML file \u2014 there is no backend server, no build pipeline, and no account to create."),
+
+        h2("Purpose"),
+        p("The goal is to give you a private, low-friction place to view and review your transactions. You set a password, optionally connect Plaid to pull in your accounts, and the dashboard renders your activity. Nothing about your finances leaves your device. The only outbound connections and requests made are to Plaid, to fetch your account transactions."),
+
+        h2("Trustless by design"),
+        p("Outside of an opt-in connection to Plaid (a third-party financial data aggregator), this application is trustless: all of your data is stored and processed entirely inside your own browser. The encrypted vault lives in your browser's IndexedDB, encryption and decryption happen locally with the Web Crypto API using a password only you know, and there is no telemetry, no analytics, and no third-party tracking. We \u2014 or anyone else hosting the static files \u2014 cannot read your data."),
+        p("If you do connect Plaid, the data you fetch from Plaid is governed by Plaid's own terms and privacy policy. See the Privacy Policy page for details."),
+
+        h2("Open source"),
+        p(
+          "The entire application is a single HTML file you can audit. Source code: ",
+          a({ href: "https://github.com/louisr/budget-vanjs/blob/main/docs/index.html", target: "_blank", rel: "noopener noreferrer" }, "github.com/louisr/budget-vanjs")
+        ),
+        p("You can download the source code yourself, review or modify the code, and run it locally in your browser."),
+
+        h2("How it works"),
+        p("Create a dashboard with a password, optionally save your Plaid credentials in Settings, and use Sync now to pull in transactions. Your data stays on this device, encrypted with your password. You can export an encrypted backup file at any time and restore it on this or another device using the same password.")
       );
 
       const privacyPage = () => div(
@@ -1340,7 +1355,7 @@
         p({ class: "muted-small" }, `Last updated: ${new Date().toISOString().slice(0, 10)}`),
 
         h2("Summary"),
-        p("Live Budget Dashboard is a static, client-side web application. There is no backend server operated by us, no analytics, no advertising, and no third-party tracking. All of your data lives on your own device, encrypted with a password you choose."),
+        p("Offline Budget Dashboard is a static, client-side web application. There is no backend server operated by us, no analytics, no advertising, and no third-party tracking. All of your data lives on your own device, encrypted with a password you choose."),
 
         h2("What we collect"),
         p("We do not collect, transmit, or store any personal information on a server. The application itself is delivered as static files from GitHub Pages; standard web-server access logs (such as IP address and user agent) may be recorded by GitHub as the hosting provider, subject to GitHub's own privacy policy."),
