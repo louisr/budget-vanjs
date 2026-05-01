@@ -360,6 +360,12 @@
         border-top-color: rgba(255, 255, 255, 0.08);
       }
 
+      .footer-links {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+
       a {
         color: inherit;
         text-decoration: none;
@@ -765,6 +771,8 @@
         const hash = window.location.hash;
         if (hash === "#about") {
           route.val = "about";
+        } else if (hash === "#privacy") {
+          route.val = "privacy";
         } else if (hash.startsWith("#/restore")) {
           route.val = "restore";
         } else if (hash.startsWith("#/settings")) {
@@ -1326,6 +1334,48 @@
         p("Routing is handled with URL hashes so refreshing keeps the current view.")
       );
 
+      const privacyPage = () => div(
+        { class: "card stack" },
+        h2("Privacy Policy"),
+        p({ class: "muted-small" }, `Last updated: ${new Date().toISOString().slice(0, 10)}`),
+
+        h2("Summary"),
+        p("Live Budget Dashboard is a static, client-side web application. There is no backend server operated by us, no analytics, no advertising, and no third-party tracking. All of your data lives on your own device, encrypted with a password you choose."),
+
+        h2("What we collect"),
+        p("We do not collect, transmit, or store any personal information on a server. The application itself is delivered as static files from GitHub Pages; standard web-server access logs (such as IP address and user agent) may be recorded by GitHub as the hosting provider, subject to GitHub's own privacy policy."),
+
+        h2("Data stored on your device"),
+        p("The dashboard stores the following in your browser's IndexedDB (with a one-time migration from the legacy localStorage entry, if present):"),
+        p("\u2022 Your configuration (first name, Plaid client ID, encrypted Plaid secret)."),
+        p("\u2022 Synced transaction data."),
+        p("\u2022 Theme preference."),
+        p("All of the above is encrypted at rest using AES-GCM 256, with a key derived from your password via PBKDF2 (SHA-256, 600,000 iterations) and a per-vault random salt. Your password is never stored, never transmitted, and cannot be recovered. If you forget it, the data is unrecoverable."),
+
+        h2("Backups"),
+        p("You can export an encrypted backup file at any time from the Settings page or the Reset modal. The backup contains the same encrypted envelope stored on your device and can only be decrypted with your password. You are responsible for storing backups securely."),
+
+        h2("Plaid"),
+        p("This dashboard is designed to display transactions retrieved from Plaid (https://plaid.com), a third-party financial data aggregator. To use the sync feature, you provide your own Plaid client ID and secret, which are stored on your device inside the encrypted vault (the secret is wrapped in an additional encryption envelope and is only decrypted in memory at sync time, after you re-enter your password)."),
+        p("In the current build, the sync function is a stub that returns hardcoded sample transactions; no real call to Plaid is made. If you connect a real Plaid integration in the future, you should proxy requests through a server you control rather than calling Plaid directly from the browser, because Plaid's API requires your secret to authenticate. When you do connect to Plaid, your use of Plaid's services and the data Plaid receives or returns is governed by Plaid's own End User Privacy Policy:"),
+        p(a({ href: "https://plaid.com/legal/#end-user-privacy-policy", target: "_blank", rel: "noopener noreferrer" }, "https://plaid.com/legal/#end-user-privacy-policy")),
+
+        h2("Cookies and tracking"),
+        p("This site does not set cookies and does not use any analytics, advertising, or tracking technologies."),
+
+        h2("Your choices"),
+        p("You can delete all locally stored data at any time using the Reset Dashboard button on the Settings page, or by clearing site data in your browser settings. Deletion is irreversible unless you have an exported backup."),
+
+        h2("Children's privacy"),
+        p("This application is not directed to children under 13 and does not knowingly collect any data from anyone."),
+
+        h2("Changes to this policy"),
+        p("This policy may be updated as the application evolves. The 'Last updated' date above reflects the most recent change."),
+
+        h2("Contact"),
+        p("For questions about this policy, open an issue on the project's GitHub repository.")
+      );
+
       const restorePage = () => div(
         { class: "card stack" },
         h2("Restore a dashboard"),
@@ -1368,6 +1418,7 @@
         const unlocked = hasEncrypted.val;
         void config.val;
         if (r === "about") return aboutPage();
+        if (r === "privacy") return privacyPage();
         if (r === "restore") return restorePage();
         if (!unlocked) return div();
         if (r === "settings") return settingsPage();
@@ -1377,9 +1428,13 @@
       const pageFooter = () => footer(
         div("© Cogitatio LLC 2026"),
         div(
+          { class: "footer-links" },
           route.val === "about"
             ? a({ href: "#/" }, "Back to dashboard")
-            : a({ href: "#about" }, "About this page")
+            : a({ href: "#about" }, "About this page"),
+          route.val === "privacy"
+            ? a({ href: "#/" }, "Back to dashboard")
+            : a({ href: "#privacy" }, "Privacy Policy")
         )
       );
 
