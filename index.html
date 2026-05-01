@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Budget Dashboard - VanJS Hello</title>
-    <meta name="description" content="VanJS hello world for a budget dashboard.">
+    <title>Live Budget Dashboard</title>
+    <meta name="description" content="Live Budget Dashboard with VanJS and local storage config.">
     <style>
       :root {
         color-scheme: light dark;
@@ -23,9 +23,18 @@
         color: #f3f1ec;
       }
 
+      h1,
+      h2 {
+        margin: 0;
+      }
+
+      p {
+        margin: 0;
+      }
+
       .container {
         min-height: 100vh;
-        padding: 2.5rem;
+        padding: 1rem 1.75rem 2rem;
       }
 
       .toolbar {
@@ -33,11 +42,12 @@
         justify-content: space-between;
         align-items: center;
         gap: 1rem;
+        padding: 0;
       }
 
       .card {
-        margin-top: 2rem;
-        padding: 1.5rem;
+        margin-top: 1rem;
+        padding: 1.25rem;
         border-radius: 16px;
         background: rgba(255, 255, 255, 0.7);
         border: 1px solid rgba(0, 0, 0, 0.08);
@@ -71,6 +81,180 @@
       .toggle:hover {
         transform: translateY(-1px);
       }
+
+      .icon-button {
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        background: rgba(255, 255, 255, 0.8);
+        color: #1c1c1c;
+        border-radius: 12px;
+        padding: 0.55rem 0.7rem;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: transform 150ms ease, background 200ms ease, border-color 200ms ease;
+      }
+
+      body.dark .icon-button {
+        background: rgba(18, 22, 28, 0.9);
+        color: #f3f1ec;
+        border-color: rgba(255, 255, 255, 0.12);
+      }
+
+      .icon-button:hover {
+        transform: translateY(-1px);
+      }
+
+      .icon-button svg {
+        width: 20px;
+        height: 20px;
+        stroke: currentColor;
+      }
+
+      .stack {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .field {
+        display: grid;
+        gap: 0.4rem;
+      }
+
+      label {
+        font-size: 0.9rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      input {
+        padding: 0.7rem 0.9rem;
+        border-radius: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: rgba(255, 255, 255, 0.9);
+        font-size: 0.95rem;
+      }
+
+      body.dark input {
+        border-color: rgba(255, 255, 255, 0.2);
+        background: rgba(17, 20, 26, 0.9);
+        color: #f3f1ec;
+      }
+
+      .primary {
+        width: fit-content;
+        padding: 0.7rem 1.4rem;
+        border-radius: 12px;
+        border: 0;
+        font-weight: 700;
+        cursor: pointer;
+        background: #2e6bff;
+        color: #ffffff;
+        transition: transform 150ms ease, filter 150ms ease;
+      }
+
+      .primary:hover {
+        transform: translateY(-1px);
+        filter: brightness(1.05);
+      }
+
+      .secondary {
+        padding: 0.6rem 1.1rem;
+        border-radius: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.15);
+        background: transparent;
+        color: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      body.dark .secondary {
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+
+      .muted {
+        font-size: 0.9rem;
+        opacity: 0.75;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 12, 16, 0.45);
+        display: none;
+        place-items: center;
+        padding: 1.5rem;
+        z-index: 100;
+      }
+
+      body.modal-open .modal-backdrop {
+        display: grid;
+      }
+
+      .modal {
+        width: min(520px, 100%);
+        background: #fefbf7;
+        border-radius: 18px;
+        padding: 1.6rem;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 30px 60px rgba(0, 0, 0, 0.2);
+      }
+
+      body.dark .modal {
+        background: #141922;
+        border-color: rgba(255, 255, 255, 0.08);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .transactions {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .transaction {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.5rem;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.6);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+      }
+
+      body.dark .transaction {
+        background: rgba(22, 26, 34, 0.9);
+        border-color: rgba(255, 255, 255, 0.08);
+      }
+
+      .amount {
+        font-weight: 700;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(46, 107, 255, 0.12);
+        color: #1b3f99;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      body.dark .pill {
+        background: rgba(120, 164, 255, 0.2);
+        color: #cfe0ff;
+      }
     </style>
   </head>
   <body>
@@ -79,32 +263,260 @@
     <script type="module">
       import van from "https://cdn.jsdelivr.net/gh/vanjs-org/van/public/van-1.6.0.min.js"
       
-      const { button, div, h1, p } = van.tags;
+      const { button, div, h1, h2, input, label, p, span } = van.tags;
+      const createSvgElement = (tag, props, ...children) => {
+        const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+        if (props) {
+          Object.entries(props).forEach(([key, value]) => {
+            if (value == null) return;
+            el.setAttribute(key, value);
+          });
+        }
+        children.flat().forEach((child) => {
+          if (child == null) return;
+          el.append(child.nodeType ? child : document.createTextNode(child));
+        });
+        return el;
+      };
+      const svg = {
+        svg: (props, ...children) => createSvgElement("svg", props, ...children),
+        path: (props) => createSvgElement("path", props)
+      };
       const app = document.getElementById("app");
       const isDark = van.state(false);
+      const storageKey = "budgetDashboardConfig";
+      const dataKey = "budgetDashboardData";
+
+      const loadConfig = () => {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const saveConfig = (config) => {
+        localStorage.setItem(storageKey, JSON.stringify(config));
+      };
+
+      const loadData = () => {
+        try {
+          const raw = localStorage.getItem(dataKey);
+          return raw ? JSON.parse(raw) : { transactions: [], lastSync: null };
+        } catch (error) {
+          return { transactions: [], lastSync: null };
+        }
+      };
+
+      const saveData = (data) => {
+        localStorage.setItem(dataKey, JSON.stringify(data));
+      };
+
+      const config = van.state(loadConfig());
+      const data = van.state(loadData());
+      const firstName = van.state("");
+      const plaidClientId = van.state("");
+      const plaidSecret = van.state("");
 
       const toggleTheme = () => {
         isDark.val = !isDark.val;
         document.body.classList.toggle("dark", isDark.val);
       };
 
+      const openSettings = () => {
+        const current = config.val;
+        firstName.val = current?.firstName || "";
+        plaidClientId.val = current?.plaidClientId || "";
+        plaidSecret.val = current?.plaidSecret || "";
+        document.body.classList.add("modal-open");
+      };
+
+      const closeSettings = () => {
+        document.body.classList.remove("modal-open");
+      };
+
+      const handleConfigSubmit = (event) => {
+        event.preventDefault();
+        const payload = {
+          firstName: firstName.val.trim(),
+          plaidClientId: plaidClientId.val.trim(),
+          plaidSecret: plaidSecret.val.trim()
+        };
+
+        if (!payload.firstName || !payload.plaidClientId || !payload.plaidSecret) {
+          return;
+        }
+
+        saveConfig(payload);
+        config.val = payload;
+        firstName.val = "";
+        plaidClientId.val = "";
+        plaidSecret.val = "";
+        closeSettings();
+      };
+
+      const connectPlaidSandbox = () => {
+        const sampleTransactions = [
+          { id: "txn-1", name: "Green Market", amount: -42.18, date: "2026-05-01", category: "Groceries" },
+          { id: "txn-2", name: "Bright Utilities", amount: -86.4, date: "2026-04-29", category: "Utilities" },
+          { id: "txn-3", name: "Payroll", amount: 1850.0, date: "2026-04-28", category: "Income" },
+          { id: "txn-4", name: "Metro Transit", amount: -18.0, date: "2026-04-27", category: "Transport" }
+        ];
+        const updated = {
+          transactions: sampleTransactions,
+          lastSync: new Date().toISOString()
+        };
+        saveData(updated);
+        data.val = updated;
+      };
+
+      const settingsModal = div(
+        { class: "modal-backdrop", onclick: closeSettings },
+        div(
+          {
+            class: "modal stack",
+            role: "dialog",
+            "aria-modal": "true",
+            onclick: (event) => event.stopPropagation()
+          },
+          div(
+            { class: "modal-header" },
+            h2("Settings"),
+            button({ class: "secondary", type: "button", onclick: closeSettings }, "Close")
+          ),
+          div(
+            { class: "stack" },
+            button(
+              { class: "toggle", type: "button", onclick: toggleTheme },
+              () => (isDark.val ? "Light mode" : "Dark mode")
+            ),
+            van.tags.form(
+              { class: "stack", onsubmit: handleConfigSubmit },
+              div(
+                { class: "field" },
+                label({ for: "first-name" }, "First name"),
+                input({
+                  id: "first-name",
+                  name: "first-name",
+                  type: "text",
+                  placeholder: "Jordan",
+                  required: true,
+                  value: () => firstName.val,
+                  oninput: (event) => firstName.val = event.target.value
+                })
+              ),
+              div(
+                { class: "field" },
+                label({ for: "plaid-client-id" }, "Plaid client ID"),
+                input({
+                  id: "plaid-client-id",
+                  name: "plaid-client-id",
+                  type: "text",
+                  placeholder: "client-id",
+                  required: true,
+                  value: () => plaidClientId.val,
+                  oninput: (event) => plaidClientId.val = event.target.value
+                })
+              ),
+              div(
+                { class: "field" },
+                label({ for: "plaid-secret" }, "Plaid secret"),
+                input({
+                  id: "plaid-secret",
+                  name: "plaid-secret",
+                  type: "password",
+                  placeholder: "secret",
+                  required: true,
+                  value: () => plaidSecret.val,
+                  oninput: (event) => plaidSecret.val = event.target.value
+                })
+              ),
+              button({ class: "primary", type: "submit" }, "Save settings")
+            )
+          )
+        )
+      );
+
+      const header = div(
+        { class: "toolbar" },
+        h1("Live Budget Dashboard"),
+        button(
+          {
+            class: "icon-button",
+            type: "button",
+            onclick: openSettings,
+            "aria-label": "Open settings"
+          },
+          svg.svg(
+            { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+            svg.path({
+              d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
+              stroke: "currentColor",
+              "stroke-width": "1.5",
+              "stroke-linecap": "round",
+              "stroke-linejoin": "round"
+            })
+          )
+        )
+      );
+
+      const dashboard = () => config.val
+        ? div(
+            { class: "grid" },
+            div(
+              { class: "card stack" },
+              h2(`Welcome, ${config.val.firstName}!`),
+              p("Your budget data and Plaid credentials are saved locally."),
+              p({ class: "muted" }, "Sandbox: generate a sample Plaid sync and transactions list."),
+              button(
+                { class: "primary", type: "button", onclick: connectPlaidSandbox },
+                data.val.transactions.length ? "Refresh sample sync" : "Connect Plaid (sandbox)"
+              ),
+              data.val.lastSync
+                ? p({ class: "muted" }, `Last sync: ${new Date(data.val.lastSync).toLocaleString()}`)
+                : null
+            ),
+            div(
+              { class: "card stack" },
+              h2("Recent transactions"),
+              data.val.transactions.length
+                ? div(
+                    { class: "transactions" },
+                    data.val.transactions.map((transaction) =>
+                      div(
+                        { class: "transaction" },
+                        div(
+                          { class: "stack" },
+                          span(transaction.name),
+                          span({ class: "pill" }, transaction.category),
+                          span({ class: "muted" }, transaction.date)
+                        ),
+                        span(
+                          { class: "amount" },
+                          `${transaction.amount < 0 ? "-" : "+"}$${Math.abs(transaction.amount).toFixed(2)}`
+                        )
+                      )
+                    )
+                  )
+                : p({ class: "muted" }, "No transactions yet. Connect Plaid to pull data.")
+            )
+          )
+        : div(
+            { class: "card stack" },
+            h2("Set up your dashboard"),
+            p("We store your configuration in localStorage so this site can run on GitHub Pages."),
+            button({ class: "primary", type: "button", onclick: openSettings }, "Open settings")
+          );
+
       van.add(
         app,
         div(
           { class: "container" },
-          div(
-            { class: "toolbar" },
-            h1("Hello, VanJS!"),
-            button(
-              { class: "toggle", onclick: toggleTheme },
-              () => (isDark.val ? "Light mode" : "Dark mode")
-            )
-          ),
-          div(
-            { class: "card" },
-            p("Your budget dashboard starts here.")
-          )
-        )
+          header,
+          dashboard
+        ),
+        settingsModal
       );
     </script>
   </body>
