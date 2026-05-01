@@ -3,22 +3,30 @@
 A single-page Budget Dashboard built with [VanJS](https://vanjs.org/), hosted on GitHub Pages. The app is fully static: no backend, no build step. All user data lives in the browser (IndexedDB, with a one-time migration from legacy `localStorage`), encrypted client-side with a user-supplied password.
 
 ## Repository Layout
-- `docs/index.html` — entire app: markup, inline CSS, and the inline ES module that holds all logic. This is the document root served by Live Server and (when configured) GitHub Pages.
-- `docs/js/van-1.6.0.min.js` — vendored VanJS runtime. Imported by `index.html` as `./js/van-1.6.0.min.js` so we never load JS from a CDN at runtime.
+- `docs/index.html` — minimal HTML shell: CSP meta, favicon, stylesheet link, modulepreload for VanJS (with SRI), and the entry `<script type="module" src="./js/app.js">`. No inline CSS or JS — required by the strict CSP.
+- `docs/css/app.css` — all styles for the app. Linked from `index.html`.
+- `docs/js/app.js` — the entire ES module: state, routing, encryption, IndexedDB helpers, components. Imports VanJS as `./van-1.6.0.min.js` (relative to itself).
+- `docs/js/van-1.6.0.min.js` — vendored VanJS runtime. Preloaded with SRI from `index.html` (`<link rel="modulepreload" integrity="sha384-..." crossorigin="anonymous">`); never loaded from a CDN at runtime.
+- `docs/favicon.svg` — `$` glyph favicon.
 - `docs/CNAME` — custom domain for GitHub Pages.
 - `.vscode/settings.json` — pins Live Server's root to `/docs`.
 - `AGENTS.md` — this file.
 
-There is no `package.json`, bundler, or test runner. Edit `docs/index.html` directly.
+There is no `package.json`, bundler, or test runner. Edit `docs/css/app.css` and `docs/js/app.js` directly; `docs/index.html` rarely needs to change.
 
 ## Local Development
 - The recommended workflow is the VS Code Live Server extension; it is configured (via `.vscode/settings.json`) to serve from `docs/`.
-- Alternatively, serve the `docs/` directory over HTTP yourself (the inline module imports VanJS as a relative `./js/van-1.6.0.min.js`, and `crypto.subtle` requires a secure context):
+- Alternatively, serve the `docs/` directory over HTTP yourself (the module imports VanJS as a relative `./van-1.6.0.min.js`, and `crypto.subtle` requires a secure context):
   ```bash
   python3 -m http.server 5500 --directory docs
   ```
 - Open `http://localhost:5500/`. There is no hot reload — refresh the page after edits.
-- The CSP `meta` tag allows scripts and connections only from `'self'`. VanJS is vendored at `docs/js/van-1.6.0.min.js`; do not re-introduce CDN imports without auditing the supply-chain implications and updating the CSP.
+- The CSP `meta` tag is strict: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'`. **No `'unsafe-inline'`** — do not add inline `<script>`, inline `<style>` blocks, inline `style="..."` attributes, or inline event handlers (`onclick="..."`). All styling belongs in `docs/css/app.css`; all behavior belongs in `docs/js/app.js`. Live Server injects an inline reload script in dev which CSP blocks (harmless console warning); production (GitHub Pages) is unaffected.
+- VanJS is vendored at `docs/js/van-1.6.0.min.js` and integrity-checked via SRI on `<link rel="modulepreload">`. If you upgrade VanJS, regenerate the hash:
+  ```bash
+  openssl dgst -sha384 -binary docs/js/van-1.6.0.min.js | openssl base64 -A
+  ```
+  and update the `integrity="sha384-..."` attribute in `docs/index.html`. Do not re-introduce CDN imports without auditing the supply-chain implications and updating the CSP.
 
 ## Architecture
 - **State**: VanJS `van.state` for `route`, `isUnlocked`, `authMode`, `hasEncrypted`, `config`, `data`, theme, and form fields. The derived session `sessionKey` / `sessionSalt` are module-scoped variables (never serialized).
@@ -28,7 +36,7 @@ There is no `package.json`, bundler, or test runner. Edit `docs/index.html` dire
   - `sync-modal-open` → Plaid sync password prompt
   - `auth-modal-open` → lock screen (create / unlock)
 - Modals are reserved for confirmations (reset) and re-auth prompts (sync, unlock). Editing flows live on dedicated routes (e.g. `#/settings`).
-- **Reactivity**: prefer function children (`() => ...`) over `van.derive(...)` returning DOM when a node depends on a state, to keep re-renders local and avoid replacing input nodes (which would reset focus / file selections). When a function child branches on multiple states, read each `state.val` unconditionally at the top so VanJS tracks every dependency, not just the ones taken on the first render.
+- **Reactivity**: prefer function children (`() => ...`) over `van.derive(...)` returning DOM when a node depends on a state, to keep re-renders local and avoid replacing input nodes (which would reset focus / file selections). When a function child branches on multiple states, read each `state.val` unconditionally at the top so VanJS tracks every dependency, not just the ones taken on the first render. **Top-level components must be passed to `van.add` as functions** (e.g. `van.add(app, lockScreen)` where `lockScreen = () => div(...)`), not as pre-built DOM trees — VanJS only sets up reactive bindings when the subtree is built during mount; bindings inside a tree built at module load against detached nodes are silently dropped.
 
 ## Encryption
 - **Outer vault**: PBKDF2(SHA-256, 600 000 iterations) → AES-GCM 256, derived from the user's password + a per-vault random salt.

@@ -1,0 +1,1164 @@
+import van from "./van-1.6.0.min.js"
+
+const { a, button, div, footer, h1, h2, input, label, p, span } = van.tags;
+const createSvgElement = (tag, props, ...children) => {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  if (props) {
+    Object.entries(props).forEach(([key, value]) => {
+      if (value == null) return;
+      el.setAttribute(key, value);
+    });
+  }
+  children.flat().forEach((child) => {
+    if (child == null) return;
+    el.append(child.nodeType ? child : document.createTextNode(child));
+  });
+  return el;
+};
+const svg = {
+  svg: (props, ...children) => createSvgElement("svg", props, ...children),
+  path: (props) => createSvgElement("path", props)
+};
+const app = document.getElementById("app");
+const isDark = van.state(false);
+const encryptedKey = "budgetDashboardEncrypted";
+const route = van.state("dashboard");
+const isUnlocked = van.state(false);
+const authMode = van.state("unlock");
+const authModalClass = "auth-modal-open";
+const hasEncrypted = van.state(false);
+const authError = van.state("");
+const passwordInput = van.state("");
+const confirmPasswordInput = van.state("");
+const resetModalClass = "reset-modal-open";
+let sessionKey = null;
+let sessionSalt = null;
+
+const config = van.state(null);
+const data = van.state({ transactions: [], lastSync: null });
+const firstName = van.state("");
+const plaidClientId = van.state("");
+const plaidSecret = van.state("");
+const plaidEnv = van.state("sandbox");
+const syncModalClass = "sync-modal-open";
+const syncPasswordInput = van.state("");
+const syncError = van.state("");
+const isSyncing = van.state(false);
+
+const storageEstimateText = van.state("");
+const storagePersisted = van.state(false);
+
+const refreshStorageEstimate = async () => {
+  if (!navigator.storage || !navigator.storage.estimate) {
+    storageEstimateText.val = "Storage estimate not supported by this browser.";
+    return;
+  }
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    const fmt = (n) => {
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+      return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    };
+    storageEstimateText.val = quota
+      ? `Using ${fmt(usage)} of ~${fmt(quota)} available`
+      : `Using ${fmt(usage)}`;
+  } catch (_) {
+    storageEstimateText.val = "Could not read storage estimate.";
+  }
+  try {
+    storagePersisted.val = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+  } catch (_) { /* ignore */ }
+};
+
+const requestPersistentStorage = async () => {
+  if (!navigator.storage || !navigator.storage.persist) return;
+  try {
+    await navigator.storage.persist();
+  } catch (_) { /* ignore */ }
+  await refreshStorageEstimate();
+};
+
+const applyTheme = (darkMode) => {
+  document.body.classList.toggle("dark", darkMode);
+};
+
+const toggleTheme = () => {
+  isDark.val = !isDark.val;
+  applyTheme(isDark.val);
+  persistEncrypted().catch(() => null);
+};
+
+const toBase64 = (bytes) => btoa(String.fromCharCode(...bytes));
+const fromBase64 = (base64) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+
+// ---- IndexedDB-backed vault storage ----
+// Schema: database "budget-dashboard", object store "vault" keyed by "name".
+// The vault record { name: "current", payload: { v, salt, iv, data } } stores the
+// same encrypted envelope shape we previously held in localStorage[encryptedKey].
+// We keep the envelope shape identical so backup .json files remain interchangeable
+// between this version and the legacy localStorage version.
+const idbName = "budget-dashboard";
+const idbStore = "vault";
+const idbVaultKey = "current";
+
+const openVaultDb = () => new Promise((resolve, reject) => {
+  const req = indexedDB.open(idbName, 1);
+  req.onupgradeneeded = () => {
+    const db = req.result;
+    if (!db.objectStoreNames.contains(idbStore)) {
+      db.createObjectStore(idbStore, { keyPath: "name" });
+    }
+  };
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error);
+});
+
+const idbGet = (key) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+  const tx = db.transaction(idbStore, "readonly");
+  const req = tx.objectStore(idbStore).get(key);
+  req.onsuccess = () => { resolve(req.result); db.close(); };
+  req.onerror = () => { reject(req.error); db.close(); };
+}));
+
+const idbPut = (record) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+  const tx = db.transaction(idbStore, "readwrite");
+  tx.objectStore(idbStore).put(record);
+  tx.oncomplete = () => { resolve(); db.close(); };
+  tx.onerror = () => { reject(tx.error); db.close(); };
+}));
+
+const idbDelete = (key) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+  const tx = db.transaction(idbStore, "readwrite");
+  tx.objectStore(idbStore).delete(key);
+  tx.oncomplete = () => { resolve(); db.close(); };
+  tx.onerror = () => { reject(tx.error); db.close(); };
+}));
+
+const loadStoredVault = async () => {
+  // Prefer IndexedDB. Fall back to legacy localStorage envelope if present.
+  try {
+    const rec = await idbGet(idbVaultKey);
+    if (rec && rec.payload) return rec.payload;
+  } catch (_) {
+    // IndexedDB unavailable / blocked — fall back to localStorage.
+  }
+  const legacy = localStorage.getItem(encryptedKey);
+  return legacy ? JSON.parse(legacy) : null;
+};
+
+const writeStoredVault = async (envelope) => {
+  await idbPut({ name: idbVaultKey, payload: envelope });
+  // Drop the legacy localStorage copy once we've successfully written to IDB.
+  if (localStorage.getItem(encryptedKey)) {
+    localStorage.removeItem(encryptedKey);
+  }
+};
+
+const clearStoredVault = async () => {
+  try { await idbDelete(idbVaultKey); } catch (_) { /* ignore */ }
+  localStorage.removeItem(encryptedKey);
+};
+
+const hasStoredVault = async () => {
+  try {
+    const rec = await idbGet(idbVaultKey);
+    if (rec && rec.payload) return true;
+  } catch (_) { /* ignore */ }
+  return !!localStorage.getItem(encryptedKey);
+};
+
+const encryptString = async (plaintext, key) => {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      new TextEncoder().encode(plaintext)
+    )
+  );
+  return { iv: toBase64(iv), data: toBase64(ciphertext) };
+};
+
+const decryptString = async (envelope, key) => {
+  const iv = fromBase64(envelope.iv);
+  const ciphertext = fromBase64(envelope.data);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+  return new TextDecoder().decode(plaintext);
+};
+
+const deriveKey = async (password, salt) => {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 600000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+};
+
+const normalizePayload = (payload) => ({
+  config: payload?.config ?? null,
+  data: payload?.data ?? { transactions: [], lastSync: null },
+  theme: payload?.theme ?? false
+});
+
+const migrateConfig = async (cfg) => {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  if (typeof cfg.plaidSecret === "string" && cfg.plaidSecret && sessionKey) {
+    const enc = await encryptString(cfg.plaidSecret, sessionKey);
+    const { plaidSecret: _drop, ...rest } = cfg;
+    return { ...rest, plaidSecretEnc: enc };
+  }
+  return cfg;
+};
+
+const setAppState = (payload) => {
+  const normalized = normalizePayload(payload);
+  config.val = normalized.config;
+  data.val = normalized.data;
+  isDark.val = normalized.theme;
+  applyTheme(isDark.val);
+};
+
+const persistEncrypted = async () => {
+  if (!sessionKey || !sessionSalt) return;
+  const encoder = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = encoder.encode(JSON.stringify({
+    config: config.val,
+    data: data.val,
+    theme: isDark.val
+  }));
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, sessionKey, plaintext)
+  );
+  const envelope = {
+    v: 1,
+    salt: toBase64(sessionSalt),
+    iv: toBase64(iv),
+    data: toBase64(ciphertext)
+  };
+  await writeStoredVault(envelope);
+};
+
+const unlockWithPassword = async (password) => {
+  const stored = await loadStoredVault();
+  if (!stored) {
+    authMode.val = "create";
+    return;
+  }
+  const cameFromLegacy = !!localStorage.getItem(encryptedKey);
+  const salt = fromBase64(stored.salt);
+  const iv = fromBase64(stored.iv);
+  const ciphertext = fromBase64(stored.data);
+  const key = await deriveKey(password, salt);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    ciphertext
+  );
+  const payload = JSON.parse(new TextDecoder().decode(decrypted));
+  sessionKey = key;
+  sessionSalt = salt;
+  setAppState(payload);
+  const migrated = await migrateConfig(config.val);
+  if (migrated !== config.val) {
+    config.val = migrated;
+    await persistEncrypted();
+  } else if (cameFromLegacy) {
+    // First unlock after upgrading to IndexedDB-backed storage:
+    // re-persist so the vault lives in IDB (and the legacy localStorage copy is removed).
+    await persistEncrypted();
+  }
+  isUnlocked.val = true;
+  document.body.classList.remove(authModalClass);
+  hasEncrypted.val = true;
+  authError.val = "";
+  // After unlocking from a transient route (e.g. restore), land on the dashboard.
+  if (route.val === "restore") {
+    window.location.hash = "#/";
+  } else if (route.val === "settings") {
+    // Hash didn't change, so syncRouteFromHash won't fire — populate the
+    // settings form now that config.val is available.
+    populateSettingsForm();
+  }
+};
+
+const createVault = async (password) => {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveKey(password, salt);
+  sessionKey = key;
+  sessionSalt = salt;
+  setAppState({ config: null, data: { transactions: [], lastSync: null }, theme: false });
+  await persistEncrypted();
+  isUnlocked.val = true;
+  document.body.classList.remove(authModalClass);
+  hasEncrypted.val = true;
+  authError.val = "";
+};
+
+const initializeAuth = async () => {
+  const present = await hasStoredVault();
+  hasEncrypted.val = present;
+  authMode.val = present ? "unlock" : "create";
+  isUnlocked.val = !present;
+  if (present) {
+    document.body.classList.add(authModalClass);
+  } else {
+    document.body.classList.remove(authModalClass);
+  }
+};
+
+// Resolved once the initial IDB read finishes — used to defer first render
+// so we don't flash the "Get started" card when a vault is actually present.
+const authReady = initializeAuth();
+
+let bootComplete = false;
+
+const populateSettingsForm = () => {
+  const current = config.val;
+  firstName.val = current?.firstName || "";
+  plaidClientId.val = current?.plaidClientId || "";
+  plaidEnv.val = current?.plaidEnv || "sandbox";
+  // Never repopulate the plaintext secret. Empty input means "keep existing".
+  plaidSecret.val = "";
+  refreshStorageEstimate();
+};
+
+const syncRouteFromHash = () => {
+  const hash = window.location.hash;
+  if (hash === "#about") {
+    route.val = "about";
+  } else if (hash === "#privacy") {
+    route.val = "privacy";
+  } else if (hash.startsWith("#/restore")) {
+    route.val = "restore";
+  } else if (hash.startsWith("#/settings")) {
+    // Settings requires a vault. Until the initial IDB read has finished
+    // we don't actually know whether one exists, so defer the redirect
+    // decision to the post-boot re-run rather than bouncing the user.
+    if (bootComplete && !hasEncrypted.val) {
+      window.location.hash = "#/";
+      return;
+    }
+    route.val = "settings";
+    populateSettingsForm();
+  } else {
+    route.val = "dashboard";
+  }
+};
+
+syncRouteFromHash();
+window.addEventListener("hashchange", syncRouteFromHash);
+// After the initial IDB read resolves, re-run the route guard so deep links
+// like #/settings (which require a vault) are evaluated against the correct
+// hasEncrypted state instead of the synchronous default of `false`.
+authReady.then(() => {
+  bootComplete = true;
+  syncRouteFromHash();
+}).catch(() => {
+  bootComplete = true;
+});
+
+const openSettings = () => {
+  window.location.hash = "#/settings";
+};
+
+const closeSettings = () => {
+  window.location.hash = "#/";
+};
+
+const handleConfigSubmit = async (event) => {
+  event.preventDefault();
+  const name = firstName.val.trim();
+  const clientId = plaidClientId.val.trim();
+  const secret = plaidSecret.val;
+  const env = plaidEnv.val;
+  const existingEnc = config.val?.plaidSecretEnc || null;
+
+  if (!name || !clientId) {
+    return;
+  }
+  if (!secret && !existingEnc) {
+    // First-time save requires a secret.
+    return;
+  }
+
+  let plaidSecretEnc = existingEnc;
+  if (secret) {
+    if (!sessionKey) return;
+    plaidSecretEnc = await encryptString(secret, sessionKey);
+  }
+
+  config.val = {
+    firstName: name,
+    plaidClientId: clientId,
+    plaidEnv: env,
+    plaidSecretEnc
+  };
+  firstName.val = "";
+  plaidClientId.val = "";
+  plaidSecret.val = "";
+  plaidEnv.val = "sandbox";
+  closeSettings();
+  persistEncrypted().catch(() => null);
+};
+
+const openSyncModal = () => {
+  if (!config.val?.plaidSecretEnc) return;
+  syncPasswordInput.val = "";
+  syncError.val = "";
+  document.body.classList.add(syncModalClass);
+};
+
+const closeSyncModal = () => {
+  syncPasswordInput.val = "";
+  syncError.val = "";
+  document.body.classList.remove(syncModalClass);
+};
+
+// Plaid environment → API base URL. Used by callPlaid to target the
+// correct host. The actual network call is still stubbed below.
+const plaidApiBaseUrls = {
+  sandbox: "https://sandbox.plaid.com",
+  development: "https://development.plaid.com",
+  production: "https://production.plaid.com"
+};
+
+// Calls the (stubbed) Plaid API. The decrypted secret only lives for the
+// duration of this call and is never assigned to a state or variable
+// beyond this scope.
+const callPlaid = async (plaidSecretPlaintext, plaidClientIdValue, environment) => {
+  // In a real integration this is where you'd POST to your server-side
+  // proxy with the credentials. The plaintext secret is local-only here.
+  const baseUrl = plaidApiBaseUrls[environment] || plaidApiBaseUrls.sandbox;
+  void plaidSecretPlaintext;
+  void plaidClientIdValue;
+  void baseUrl;
+  return [
+    { id: "txn-1", name: "Green Market", amount: -42.18, date: "2026-05-01", category: "Groceries" },
+    { id: "txn-2", name: "Bright Utilities", amount: -86.4, date: "2026-04-29", category: "Utilities" },
+    { id: "txn-3", name: "Payroll", amount: 1850.0, date: "2026-04-28", category: "Income" },
+    { id: "txn-4", name: "Metro Transit", amount: -18.0, date: "2026-04-27", category: "Transport" }
+  ];
+};
+
+const handleSyncSubmit = async (event) => {
+  event.preventDefault();
+  if (isSyncing.val) return;
+  const password = syncPasswordInput.val;
+  const envelope = config.val?.plaidSecretEnc;
+  if (!password || !envelope || !sessionSalt) {
+    syncError.val = "Enter your password to decrypt the Plaid secret.";
+    return;
+  }
+  isSyncing.val = true;
+  syncError.val = "";
+  let plaidSecretPlaintext = null;
+  try {
+    const key = await deriveKey(password, sessionSalt);
+    plaidSecretPlaintext = await decryptString(envelope, key);
+    const transactions = await callPlaid(
+      plaidSecretPlaintext,
+      config.val.plaidClientId,
+      config.val.plaidEnv || "sandbox"
+    );
+    data.val = {
+      transactions,
+      lastSync: new Date().toISOString()
+    };
+    await persistEncrypted();
+    closeSyncModal();
+  } catch (error) {
+    syncError.val = "Incorrect password — could not decrypt the Plaid secret.";
+  } finally {
+    plaidSecretPlaintext = null;
+    syncPasswordInput.val = "";
+    isSyncing.val = false;
+  }
+};
+
+const exportEncryptedData = async () => {
+  const envelope = await loadStoredVault();
+  if (!envelope) return;
+  const payload = JSON.stringify(envelope);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const blob = new Blob([payload], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `budget-dashboard-encrypted-${timestamp}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
+
+const confirmReset = async () => {
+  await clearStoredVault();
+  sessionKey = null;
+  sessionSalt = null;
+  document.body.classList.remove(resetModalClass);
+  document.body.classList.remove(authModalClass);
+  config.val = null;
+  data.val = { transactions: [], lastSync: null };
+  firstName.val = "";
+  plaidClientId.val = "";
+  plaidSecret.val = "";
+  hasEncrypted.val = false;
+  passwordInput.val = "";
+  confirmPasswordInput.val = "";
+  authError.val = "";
+  if (window.location.hash !== "#/") {
+    window.location.hash = "#/";
+  } else {
+    route.val = "dashboard";
+  }
+  initializeAuth();
+};
+
+const closeAuthModal = () => {
+  document.body.classList.remove(authModalClass);
+  passwordInput.val = "";
+  confirmPasswordInput.val = "";
+  authError.val = "";
+};
+
+const openCreateModal = () => {
+  passwordInput.val = "";
+  confirmPasswordInput.val = "";
+  authError.val = "";
+  authMode.val = "create";
+  document.body.classList.add(authModalClass);
+};
+
+const openUnlockModal = () => {
+  passwordInput.val = "";
+  confirmPasswordInput.val = "";
+  authError.val = "";
+  authMode.val = "unlock";
+  document.body.classList.add(authModalClass);
+};
+
+const restoreError = van.state("");
+const restoreFileName = van.state("");
+
+const handleRestoreFile = async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      parsed.v !== 1 ||
+      typeof parsed.salt !== "string" ||
+      typeof parsed.iv !== "string" ||
+      typeof parsed.data !== "string"
+    ) {
+      throw new Error("Invalid backup schema.");
+    }
+    await writeStoredVault(parsed);
+    hasEncrypted.val = true;
+    isUnlocked.val = false;
+    authMode.val = "unlock";
+    restoreError.val = "";
+    document.body.classList.add(authModalClass);
+  } catch (error) {
+    restoreError.val = "Invalid backup file.";
+  } finally {
+    event.target.value = "";
+    restoreFileName.val = "";
+  }
+};
+
+const restoreFromInput = () => {
+  const input = document.getElementById("restore-file-visible");
+  const file = input?.files?.[0];
+  if (!file) {
+    restoreError.val = "Choose a backup file to restore.";
+    return;
+  }
+  restoreError.val = "";
+  handleRestoreFile({ target: input });
+};
+
+const openResetModal = () => {
+  document.body.classList.add(resetModalClass);
+};
+
+const closeResetModal = () => {
+  document.body.classList.remove(resetModalClass);
+};
+
+const handleAuthSubmit = async (event) => {
+  event.preventDefault();
+  authError.val = "";
+  try {
+    if (authMode.val === "create") {
+      if (passwordInput.val.length < 8) {
+        authError.val = "Password must be at least 8 characters.";
+        return;
+      }
+      if (passwordInput.val !== confirmPasswordInput.val) {
+        authError.val = "Passwords do not match.";
+        return;
+      }
+      await createVault(passwordInput.val);
+    } else {
+      await unlockWithPassword(passwordInput.val);
+    }
+    passwordInput.val = "";
+    confirmPasswordInput.val = "";
+  } catch (error) {
+    authError.val = "Incorrect password or corrupted data.";
+    passwordInput.val = "";
+    confirmPasswordInput.val = "";
+  }
+};
+
+const settingsPage = () => div(
+  { class: "card stack" },
+  div(
+    { class: "card-header" },
+    h2("Settings"),
+    div(
+      { class: "card-header-right" },
+      () => config.val
+        ? button({ class: "secondary", type: "button", onclick: exportEncryptedData }, "Export data")
+        : null,
+      button({ class: "secondary", type: "button", onclick: closeSettings }, "Back to dashboard")
+    )
+  ),
+  button(
+    { class: "toggle", type: "button", onclick: toggleTheme },
+    () => (isDark.val ? "Light mode" : "Dark mode")
+  ),
+  van.tags.form(
+    { class: "stack", onsubmit: handleConfigSubmit },
+    div(
+      { class: "field" },
+      label({ for: "first-name" }, "First name"),
+      input({
+        id: "first-name",
+        name: "first-name",
+        type: "text",
+        placeholder: "Jordan",
+        required: true,
+        value: () => firstName.val,
+        oninput: (event) => firstName.val = event.target.value
+      })
+    ),
+    div(
+      { class: "field" },
+      label({ for: "plaid-client-id" }, "Plaid client ID"),
+      input({
+        id: "plaid-client-id",
+        name: "plaid-client-id",
+        type: "text",
+        placeholder: "client-id",
+        required: true,
+        value: () => plaidClientId.val,
+        oninput: (event) => plaidClientId.val = event.target.value
+      })
+    ),
+    div(
+      { class: "field" },
+      label({ for: "plaid-env" }, "Plaid environment"),
+      van.tags.select(
+        {
+          id: "plaid-env",
+          name: "plaid-env",
+          value: () => plaidEnv.val,
+          onchange: (event) => plaidEnv.val = event.target.value
+        },
+        van.tags.option({ value: "sandbox", selected: () => plaidEnv.val === "sandbox" }, "Sandbox"),
+        van.tags.option({ value: "development", selected: () => plaidEnv.val === "development" }, "Development"),
+        van.tags.option({ value: "production", selected: () => plaidEnv.val === "production" }, "Production")
+      )
+    ),
+    div(
+      { class: "field" },
+      label({ for: "plaid-secret" }, "Plaid secret"),
+      input({
+        id: "plaid-secret",
+        name: "plaid-secret",
+        type: "password",
+        placeholder: () => config.val?.plaidSecretEnc
+          ? "Leave blank to keep existing encrypted secret"
+          : "secret",
+        required: () => !config.val?.plaidSecretEnc,
+        value: () => plaidSecret.val,
+        oninput: (event) => plaidSecret.val = event.target.value
+      }),
+      () => config.val?.plaidSecretEnc
+        ? p({ class: "muted-small" }, "An encrypted secret is saved. Leave blank to keep it; type a new value to replace it.")
+        : null
+    ),
+    p(
+      { class: "muted-small" },
+      "The Plaid secret is encrypted at rest with a separate envelope and is only decrypted in memory at sync time — you will be asked for your password each sync."
+    ),
+    div(
+      { class: "row", style: "justify-content: space-between; gap: 2rem;" },
+      button({ class: "primary", type: "submit" }, "Save settings"),
+      button(
+        {
+          class: "secondary danger",
+          type: "button",
+          onclick: openResetModal
+        },
+        "Reset Dashboard"
+      )
+    )
+  ),
+  div(
+    { class: "stack" },
+    h2("Storage"),
+    p({ class: "muted-small" }, "Your encrypted vault is stored in IndexedDB on this device, which supports far more data than the previous 5 MB localStorage limit."),
+    () => p({ class: "muted-small" }, storageEstimateText.val || "Calculating storage usage..."),
+    () => storagePersisted.val
+      ? p({ class: "muted-small" }, "Persistent storage granted — the browser will not evict your vault under storage pressure.")
+      : div(
+          { class: "row" },
+          button(
+            { class: "secondary", type: "button", onclick: requestPersistentStorage },
+            "Request persistent storage"
+          )
+        )
+  )
+);
+
+const resetModal = () => div(
+  { class: "modal-backdrop reset-modal", style: "z-index: 300;", onclick: closeResetModal },
+  div(
+    {
+      class: "modal stack",
+      role: "dialog",
+      "aria-modal": "true",
+      onclick: (event) => event.stopPropagation()
+    },
+    div(
+      { class: "modal-header" },
+      h2("Reset your dashboard"),
+      button({ class: "secondary", type: "button", onclick: closeResetModal }, "Close")
+    ),
+    p({ class: "warning" }, "Warning: this action is irreversible. Existing data will not be recoverable unless you have a backup."),
+    div(
+      { class: "row" },
+      button(
+        { class: "secondary", type: "button", onclick: confirmReset },
+        "Confirm reset"
+      ),
+      button(
+        { class: "secondary", type: "button", onclick: exportEncryptedData },
+        "Download backup"
+      )
+    )
+  )
+);
+
+const syncModal = () => div(
+  { class: "modal-backdrop sync-modal", style: "z-index: 250;", onclick: closeSyncModal },
+  div(
+    {
+      class: "modal stack",
+      role: "dialog",
+      "aria-modal": "true",
+      onclick: (event) => event.stopPropagation()
+    },
+    div(
+      { class: "modal-header" },
+      h2("Sync transactions"),
+      button({ class: "secondary", type: "button", onclick: closeSyncModal }, "Close")
+    ),
+    p("Enter your password to decrypt the Plaid secret for this sync. The decrypted secret is held in memory only for the duration of the request."),
+    van.tags.form(
+      { class: "stack", onsubmit: handleSyncSubmit },
+      div(
+        { class: "field" },
+        label({ for: "sync-password" }, "Password"),
+        input({
+          id: "sync-password",
+          name: "sync-password",
+          type: "password",
+          required: true,
+          value: () => syncPasswordInput.val,
+          oninput: (event) => syncPasswordInput.val = event.target.value
+        })
+      ),
+      () => syncError.val ? p({ class: "warning" }, syncError.val) : p({ class: "warning", style: "display:none" }),
+      div(
+        { class: "row" },
+        button(
+          { class: "primary", type: "submit", disabled: () => isSyncing.val },
+          () => isSyncing.val ? "Syncing\u2026" : "Sync now"
+        ),
+        button(
+          { class: "secondary", type: "button", onclick: closeSyncModal },
+          "Cancel"
+        )
+      )
+    )
+  )
+);
+
+const header = () => div(
+  { class: "toolbar" },
+  h1("Offline Budget Dashboard"),
+  div(
+    { class: "header-actions" },
+    config.val ? span({ class: "welcome-inline" }, `Welcome, ${config.val.firstName}!`) : null,
+    hasEncrypted.val
+      ? button(
+          {
+            class: "icon-button",
+            type: "button",
+            onclick: openSettings,
+            "aria-label": "Open settings"
+          },
+          svg.svg(
+            { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+            svg.path({
+              d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
+              stroke: "currentColor",
+              "stroke-width": "1.5",
+              "stroke-linecap": "round",
+              "stroke-linejoin": "round"
+            })
+          )
+        )
+      : null
+  )
+);
+
+const dashboard = () => config.val
+  ? div(
+      { class: "grid" },
+      div(
+        { class: "card stack" },
+        div(
+          { class: "card-header" },
+          h2("Recent transactions"),
+          div(
+            { class: "card-header-right" },
+            data.val.lastSync
+              ? span({ class: "muted-small" }, `Last sync: ${new Date(data.val.lastSync).toLocaleString()}`)
+              : null,
+            button(
+              {
+                class: "link-button",
+                type: "button",
+                onclick: openSyncModal,
+                disabled: () => !config.val?.plaidSecretEnc,
+                title: () => config.val?.plaidSecretEnc
+                  ? "Sync transactions"
+                  : "Save Plaid credentials in settings first"
+              },
+              "Sync now"
+            )
+          )
+        ),
+        data.val.transactions.length
+          ? div(
+              { class: "transactions" },
+              data.val.transactions.map((transaction) =>
+                div(
+                  { class: "transaction" },
+                  div(
+                    { class: "stack" },
+                    span(transaction.name),
+                    span({ class: "pill" }, transaction.category),
+                    span({ class: "muted" }, transaction.date)
+                  ),
+                  span(
+                    { class: "amount" },
+                    `${transaction.amount < 0 ? "-" : "+"}$${Math.abs(transaction.amount).toFixed(2)}`
+                  )
+                )
+              )
+            )
+          : p({ class: "muted" }, "No transactions yet. Connect Plaid to pull data.")
+      )
+    )
+  : div(
+      { class: "card stack" },
+      h2("Set up your dashboard"),
+      p("We store your configuration in localStorage so this site can run on GitHub Pages."),
+      button({ class: "primary", type: "button", onclick: openSettings }, "Open settings")
+    );
+
+const entryCard = () => (!hasEncrypted.val && route.val === "dashboard")
+  ? div(
+      { class: "card stack" },
+      h2("Get started"),
+      p("Create a new dashboard or restore an encrypted backup."),
+      div(
+        { class: "row" },
+        button(
+          { class: "primary", type: "button", onclick: openCreateModal },
+          "Create a new dashboard"
+        ),
+        button(
+          {
+            class: "secondary",
+            type: "button",
+            onclick: () => window.location.hash = "#/restore/"
+          },
+          "Restore a dashboard"
+        )
+      ),
+      p({ class: "muted" }, "Already have a backup? Use Restore a dashboard.")
+    )
+  : div();
+
+const aboutPage = () => div(
+  { class: "card stack" },
+  h2("About this page"),
+  p("Offline Budget Dashboard is a small, single-page web app for keeping an eye on your day-to-day finances. It is built with VanJS and hosted on GitHub Pages as a single static HTML file \u2014 there is no backend server, no build pipeline, and no account to create."),
+
+  h2("Purpose"),
+  p("The goal is to give you a private, low-friction place to view and review your transactions. You set a password, optionally connect Plaid to pull in your accounts, and the dashboard renders your activity. Nothing about your finances leaves your device. The only outbound connections and requests made are to Plaid, to fetch your account transactions."),
+
+  h2("Trustless by design"),
+  p("Outside of an opt-in connection to Plaid (a third-party financial data aggregator), this application is trustless: all of your data is stored and processed entirely inside your own browser. The encrypted vault lives in your browser's IndexedDB, encryption and decryption happen locally with the Web Crypto API using a password only you know, and there is no telemetry, no analytics, and no third-party tracking. We \u2014 or anyone else hosting the static files \u2014 cannot read your data."),
+  p("If you do connect Plaid, the data you fetch from Plaid is governed by Plaid's own terms and privacy policy. See the Privacy Policy page for details."),
+
+  h2("Open source"),
+  p(
+    "The entire application is a single HTML file you can audit. Source code: ",
+    a({ href: "https://github.com/louisr/budget-vanjs/blob/main/docs/index.html", target: "_blank", rel: "noopener noreferrer" }, "github.com/louisr/budget-vanjs")
+  ),
+  p("You can download the source code yourself, review or modify the code, and run it locally in your browser."),
+
+  h2("How it works"),
+  p("Create a dashboard with a password, optionally save your Plaid credentials in Settings, and use Sync now to pull in transactions. Your data stays on this device, encrypted with your password. You can export an encrypted backup file at any time and restore it on this or another device using the same password.")
+);
+
+const privacyPage = () => div(
+  { class: "card stack" },
+  h2("Privacy Policy"),
+  p({ class: "muted-small" }, `Last updated: ${new Date().toISOString().slice(0, 10)}`),
+
+  h2("Summary"),
+  p("Offline Budget Dashboard is a static, client-side web application. There is no backend server operated by us, no analytics, no advertising, and no third-party tracking. All of your data lives on your own device, encrypted with a password you choose."),
+
+  h2("What we collect"),
+  p("We do not collect, transmit, or store any personal information on a server. The application itself is delivered as static files from GitHub Pages; standard web-server access logs (such as IP address and user agent) may be recorded by GitHub as the hosting provider, subject to GitHub's own privacy policy."),
+
+  h2("Data stored on your device"),
+  p("The dashboard stores the following in your browser's IndexedDB (with a one-time migration from the legacy localStorage entry, if present):"),
+  p("\u2022 Your configuration (first name, Plaid client ID, encrypted Plaid secret)."),
+  p("\u2022 Synced transaction data."),
+  p("\u2022 Theme preference."),
+  p("All of the above is encrypted at rest using AES-GCM 256, with a key derived from your password via PBKDF2 (SHA-256, 600,000 iterations) and a per-vault random salt. Your password is never stored, never transmitted, and cannot be recovered. If you forget it, the data is unrecoverable."),
+
+  h2("Backups"),
+  p("You can export an encrypted backup file at any time from the Settings page or the Reset modal. The backup contains the same encrypted envelope stored on your device and can only be decrypted with your password. You are responsible for storing backups securely."),
+
+  h2("Plaid"),
+  p("This dashboard is designed to display transactions retrieved from Plaid (https://plaid.com), a third-party financial data aggregator. To use the sync feature, you provide your own Plaid client ID and secret, which are stored on your device inside the encrypted vault (the secret is wrapped in an additional encryption envelope and is only decrypted in memory at sync time, after you re-enter your password)."),
+  p("In the current build, the sync function is a stub that returns hardcoded sample transactions; no real call to Plaid is made. If you connect a real Plaid integration in the future, you should proxy requests through a server you control rather than calling Plaid directly from the browser, because Plaid's API requires your secret to authenticate. When you do connect to Plaid, your use of Plaid's services and the data Plaid receives or returns is governed by Plaid's own End User Privacy Policy:"),
+  p(a({ href: "https://plaid.com/legal/#end-user-privacy-policy", target: "_blank", rel: "noopener noreferrer" }, "https://plaid.com/legal/#end-user-privacy-policy")),
+
+  h2("Cookies and tracking"),
+  p("This site does not set cookies and does not use any analytics, advertising, or tracking technologies."),
+
+  h2("Your choices"),
+  p("You can delete all locally stored data at any time using the Reset Dashboard button on the Settings page, or by clearing site data in your browser settings. Deletion is irreversible unless you have an exported backup."),
+
+  h2("Children's privacy"),
+  p("This application is not directed to children under 13 and does not knowingly collect any data from anyone."),
+
+  h2("Changes to this policy"),
+  p("This policy may be updated as the application evolves. The 'Last updated' date above reflects the most recent change."),
+
+  h2("Contact"),
+  p("For questions about this policy, open an issue on the project's GitHub repository.")
+);
+
+const restorePage = () => div(
+  { class: "card stack" },
+  h2("Restore a dashboard"),
+  p("Restore a dashboard from a downloaded file."),
+  div(
+    { class: "file-picker-row" },
+    input({
+      id: "restore-file-visible",
+      class: "file-input",
+      type: "file",
+      accept: "application/json",
+      onchange: (event) => {
+        restoreError.val = "";
+        restoreFileName.val = event.target.files?.[0]?.name || "";
+      }
+    })
+  ),
+  () => restoreError.val ? p({ class: "warning" }, restoreError.val) : p({ class: "warning", style: "display:none" }),
+  div(
+    { class: "row" },
+    button(
+      { class: "primary", type: "button", onclick: restoreFromInput },
+      "Restore"
+    ),
+    button(
+      {
+        class: "secondary",
+        type: "button",
+        onclick: () => window.location.hash = "#/"
+      },
+      "Cancel"
+    )
+  )
+);
+
+const mainContent = () => {
+  // Read all states the body might branch on so VanJS tracks them
+  // regardless of which branch we take this render.
+  const r = route.val;
+  const unlocked = hasEncrypted.val;
+  void config.val;
+  if (r === "about") return aboutPage();
+  if (r === "privacy") return privacyPage();
+  if (r === "restore") return restorePage();
+  if (!unlocked) return div();
+  if (r === "settings") return settingsPage();
+  return dashboard();
+};
+
+const pageFooter = () => footer(
+  div("© Cogitatio LLC 2026"),
+  div(
+    { class: "footer-links" },
+    route.val === "about"
+      ? a({ href: "#/" }, "Back to dashboard")
+      : a({ href: "#about" }, "About this page"),
+    route.val === "privacy"
+      ? a({ href: "#/" }, "Back to dashboard")
+      : a({ href: "#privacy" }, "Privacy Policy")
+  )
+);
+
+const lockScreen = () => div(
+  { class: "lock-screen" },
+  div(
+    { class: "lock-panel stack" },
+    h2(() => authMode.val === "create" ? "Create a dashboard" : "Unlock your dashboard"),
+    p("This password encrypts all local data. It is never stored and cannot be recovered."),
+    van.tags.form(
+      { class: "stack", onsubmit: handleAuthSubmit },
+      div(
+        { class: "field" },
+        label({ for: "password" }, "Password"),
+        input({
+          id: "password",
+          name: "password",
+          type: "password",
+          required: true,
+          value: () => passwordInput.val,
+          oninput: (event) => passwordInput.val = event.target.value
+        })
+      ),
+      () => authMode.val === "create"
+        ? div(
+            { class: "field" },
+            label({ for: "password-confirm" }, "Confirm password"),
+            input({
+              id: "password-confirm",
+              name: "password-confirm",
+              type: "password",
+              required: true,
+              value: () => confirmPasswordInput.val,
+              oninput: (event) => confirmPasswordInput.val = event.target.value
+            })
+          )
+        : null,
+      () => authError.val ? p({ class: "warning" }, authError.val) : p({ class: "warning", style: "display:none" }),
+      () => authMode.val === "unlock"
+        ? div(
+            { class: "row" },
+            button(
+              { class: "primary", type: "submit" },
+              "Unlock"
+            ),
+            button(
+              {
+                class: "secondary danger",
+                type: "button",
+                onclick: openResetModal
+              },
+              "Clear settings/data"
+            )
+          )
+        : div(
+            { class: "row" },
+            button(
+              { class: "primary", type: "submit" },
+              "Create dashboard"
+            ),
+            button(
+              {
+                class: "secondary",
+                type: "button",
+                onclick: closeAuthModal
+              },
+              "Cancel"
+            )
+          )
+    )
+  )
+);
+
+// Defer the first render until the initial IDB read settles so we don't
+// briefly show the "Get started" entry card when a vault actually exists.
+authReady.finally(() => {
+  van.add(
+    app,
+    div(
+      { class: "container" },
+      header,
+      entryCard,
+      mainContent,
+      pageFooter
+    ),
+    lockScreen,
+    resetModal,
+    syncModal
+  );
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (document.body.classList.contains(syncModalClass)) {
+    closeSyncModal();
+  } else if (document.body.classList.contains(resetModalClass)) {
+    closeResetModal();
+  } else if (
+    document.body.classList.contains(authModalClass) &&
+    authMode.val === "create" &&
+    hasEncrypted.val === false
+  ) {
+    // allow cancelling create flow only when no vault yet has been chosen
+    closeAuthModal();
+  }
+});
