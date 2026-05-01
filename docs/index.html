@@ -463,6 +463,41 @@
       const syncError = van.state("");
       const isSyncing = van.state(false);
 
+      const storageEstimateText = van.state("");
+      const storagePersisted = van.state(false);
+
+      const refreshStorageEstimate = async () => {
+        if (!navigator.storage || !navigator.storage.estimate) {
+          storageEstimateText.val = "Storage estimate not supported by this browser.";
+          return;
+        }
+        try {
+          const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+          const fmt = (n) => {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+            return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+          };
+          storageEstimateText.val = quota
+            ? `Using ${fmt(usage)} of ~${fmt(quota)} available`
+            : `Using ${fmt(usage)}`;
+        } catch (_) {
+          storageEstimateText.val = "Could not read storage estimate.";
+        }
+        try {
+          storagePersisted.val = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+        } catch (_) { /* ignore */ }
+      };
+
+      const requestPersistentStorage = async () => {
+        if (!navigator.storage || !navigator.storage.persist) return;
+        try {
+          await navigator.storage.persist();
+        } catch (_) { /* ignore */ }
+        await refreshStorageEstimate();
+      };
+
       const applyTheme = (darkMode) => {
         document.body.classList.toggle("dark", darkMode);
       };
@@ -475,6 +510,82 @@
 
       const toBase64 = (bytes) => btoa(String.fromCharCode(...bytes));
       const fromBase64 = (base64) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+
+      // ---- IndexedDB-backed vault storage ----
+      // Schema: database "budget-dashboard", object store "vault" keyed by "name".
+      // The vault record { name: "current", payload: { v, salt, iv, data } } stores the
+      // same encrypted envelope shape we previously held in localStorage[encryptedKey].
+      // We keep the envelope shape identical so backup .json files remain interchangeable
+      // between this version and the legacy localStorage version.
+      const idbName = "budget-dashboard";
+      const idbStore = "vault";
+      const idbVaultKey = "current";
+
+      const openVaultDb = () => new Promise((resolve, reject) => {
+        const req = indexedDB.open(idbName, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(idbStore)) {
+            db.createObjectStore(idbStore, { keyPath: "name" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      const idbGet = (key) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+        const tx = db.transaction(idbStore, "readonly");
+        const req = tx.objectStore(idbStore).get(key);
+        req.onsuccess = () => { resolve(req.result); db.close(); };
+        req.onerror = () => { reject(req.error); db.close(); };
+      }));
+
+      const idbPut = (record) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+        const tx = db.transaction(idbStore, "readwrite");
+        tx.objectStore(idbStore).put(record);
+        tx.oncomplete = () => { resolve(); db.close(); };
+        tx.onerror = () => { reject(tx.error); db.close(); };
+      }));
+
+      const idbDelete = (key) => openVaultDb().then((db) => new Promise((resolve, reject) => {
+        const tx = db.transaction(idbStore, "readwrite");
+        tx.objectStore(idbStore).delete(key);
+        tx.oncomplete = () => { resolve(); db.close(); };
+        tx.onerror = () => { reject(tx.error); db.close(); };
+      }));
+
+      const loadStoredVault = async () => {
+        // Prefer IndexedDB. Fall back to legacy localStorage envelope if present.
+        try {
+          const rec = await idbGet(idbVaultKey);
+          if (rec && rec.payload) return rec.payload;
+        } catch (_) {
+          // IndexedDB unavailable / blocked — fall back to localStorage.
+        }
+        const legacy = localStorage.getItem(encryptedKey);
+        return legacy ? JSON.parse(legacy) : null;
+      };
+
+      const writeStoredVault = async (envelope) => {
+        await idbPut({ name: idbVaultKey, payload: envelope });
+        // Drop the legacy localStorage copy once we've successfully written to IDB.
+        if (localStorage.getItem(encryptedKey)) {
+          localStorage.removeItem(encryptedKey);
+        }
+      };
+
+      const clearStoredVault = async () => {
+        try { await idbDelete(idbVaultKey); } catch (_) { /* ignore */ }
+        localStorage.removeItem(encryptedKey);
+      };
+
+      const hasStoredVault = async () => {
+        try {
+          const rec = await idbGet(idbVaultKey);
+          if (rec && rec.payload) return true;
+        } catch (_) { /* ignore */ }
+        return !!localStorage.getItem(encryptedKey);
+      };
 
       const encryptString = async (plaintext, key) => {
         const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -558,21 +669,22 @@
         const ciphertext = new Uint8Array(
           await crypto.subtle.encrypt({ name: "AES-GCM", iv }, sessionKey, plaintext)
         );
-        const payload = {
+        const envelope = {
           v: 1,
           salt: toBase64(sessionSalt),
           iv: toBase64(iv),
           data: toBase64(ciphertext)
         };
-        localStorage.setItem(encryptedKey, JSON.stringify(payload));
+        await writeStoredVault(envelope);
       };
 
       const unlockWithPassword = async (password) => {
-        const stored = JSON.parse(localStorage.getItem(encryptedKey));
+        const stored = await loadStoredVault();
         if (!stored) {
           authMode.val = "create";
           return;
         }
+        const cameFromLegacy = !!localStorage.getItem(encryptedKey);
         const salt = fromBase64(stored.salt);
         const iv = fromBase64(stored.iv);
         const ciphertext = fromBase64(stored.data);
@@ -590,6 +702,10 @@
         if (migrated !== config.val) {
           config.val = migrated;
           await persistEncrypted();
+        } else if (cameFromLegacy) {
+          // First unlock after upgrading to IndexedDB-backed storage:
+          // re-persist so the vault lives in IDB (and the legacy localStorage copy is removed).
+          await persistEncrypted();
         }
         isUnlocked.val = true;
         document.body.classList.remove(authModalClass);
@@ -598,6 +714,10 @@
         // After unlocking from a transient route (e.g. restore), land on the dashboard.
         if (route.val === "restore") {
           window.location.hash = "#/";
+        } else if (route.val === "settings") {
+          // Hash didn't change, so syncRouteFromHash won't fire — populate the
+          // settings form now that config.val is available.
+          populateSettingsForm();
         }
       };
 
@@ -614,18 +734,32 @@
         authError.val = "";
       };
 
-      const initializeAuth = () => {
-        hasEncrypted.val = !!localStorage.getItem(encryptedKey);
-        authMode.val = hasEncrypted.val ? "unlock" : "create";
-        isUnlocked.val = !hasEncrypted.val;
-        if (hasEncrypted.val) {
+      const initializeAuth = async () => {
+        const present = await hasStoredVault();
+        hasEncrypted.val = present;
+        authMode.val = present ? "unlock" : "create";
+        isUnlocked.val = !present;
+        if (present) {
           document.body.classList.add(authModalClass);
         } else {
           document.body.classList.remove(authModalClass);
         }
       };
 
-      initializeAuth();
+      // Resolved once the initial IDB read finishes — used to defer first render
+      // so we don't flash the "Get started" card when a vault is actually present.
+      const authReady = initializeAuth();
+
+      let bootComplete = false;
+
+      const populateSettingsForm = () => {
+        const current = config.val;
+        firstName.val = current?.firstName || "";
+        plaidClientId.val = current?.plaidClientId || "";
+        // Never repopulate the plaintext secret. Empty input means "keep existing".
+        plaidSecret.val = "";
+        refreshStorageEstimate();
+      };
 
       const syncRouteFromHash = () => {
         const hash = window.location.hash;
@@ -634,17 +768,15 @@
         } else if (hash.startsWith("#/restore")) {
           route.val = "restore";
         } else if (hash.startsWith("#/settings")) {
-          // Settings requires a vault. Redirect to dashboard if none exists.
-          if (!hasEncrypted.val) {
+          // Settings requires a vault. Until the initial IDB read has finished
+          // we don't actually know whether one exists, so defer the redirect
+          // decision to the post-boot re-run rather than bouncing the user.
+          if (bootComplete && !hasEncrypted.val) {
             window.location.hash = "#/";
             return;
           }
           route.val = "settings";
-          const current = config.val;
-          firstName.val = current?.firstName || "";
-          plaidClientId.val = current?.plaidClientId || "";
-          // Never repopulate the plaintext secret. Empty input means "keep existing".
-          plaidSecret.val = "";
+          populateSettingsForm();
         } else {
           route.val = "dashboard";
         }
@@ -652,6 +784,15 @@
 
       syncRouteFromHash();
       window.addEventListener("hashchange", syncRouteFromHash);
+      // After the initial IDB read resolves, re-run the route guard so deep links
+      // like #/settings (which require a vault) are evaluated against the correct
+      // hasEncrypted state instead of the synchronous default of `false`.
+      authReady.then(() => {
+        bootComplete = true;
+        syncRouteFromHash();
+      }).catch(() => {
+        bootComplete = true;
+      });
 
       const openSettings = () => {
         window.location.hash = "#/settings";
@@ -757,9 +898,10 @@
         }
       };
 
-      const exportEncryptedData = () => {
-        const payload = localStorage.getItem(encryptedKey);
-        if (!payload) return;
+      const exportEncryptedData = async () => {
+        const envelope = await loadStoredVault();
+        if (!envelope) return;
+        const payload = JSON.stringify(envelope);
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const blob = new Blob([payload], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -772,8 +914,8 @@
         URL.revokeObjectURL(url);
       };
 
-      const confirmReset = () => {
-        localStorage.removeItem(encryptedKey);
+      const confirmReset = async () => {
+        await clearStoredVault();
         sessionKey = null;
         sessionSalt = null;
         document.body.classList.remove(resetModalClass);
@@ -837,7 +979,7 @@
           ) {
             throw new Error("Invalid backup schema.");
           }
-          localStorage.setItem(encryptedKey, text);
+          await writeStoredVault(parsed);
           hasEncrypted.val = true;
           isUnlocked.val = false;
           authMode.val = "unlock";
@@ -891,6 +1033,8 @@
           confirmPasswordInput.val = "";
         } catch (error) {
           authError.val = "Incorrect password or corrupted data.";
+          passwordInput.val = "";
+          confirmPasswordInput.val = "";
         }
       };
 
@@ -973,6 +1117,21 @@
               "Reset Dashboard"
             )
           )
+        ),
+        div(
+          { class: "stack" },
+          h2("Storage"),
+          p({ class: "muted-small" }, "Your encrypted vault is stored in IndexedDB on this device, which supports far more data than the previous 5 MB localStorage limit."),
+          () => p({ class: "muted-small" }, storageEstimateText.val || "Calculating storage usage..."),
+          () => storagePersisted.val
+            ? p({ class: "muted-small" }, "Persistent storage granted — the browser will not evict your vault under storage pressure.")
+            : div(
+                { class: "row" },
+                button(
+                  { class: "secondary", type: "button", onclick: requestPersistentStorage },
+                  "Request persistent storage"
+                )
+              )
         )
       );
 
@@ -1294,19 +1453,23 @@
         )
       );
 
-      van.add(
-        app,
-        div(
-          { class: "container" },
-          header,
-          entryCard,
-          mainContent,
-          pageFooter
-        ),
-        lockScreen,
-        resetModal,
-        syncModal
-      );
+      // Defer the first render until the initial IDB read settles so we don't
+      // briefly show the "Get started" entry card when a vault actually exists.
+      authReady.finally(() => {
+        van.add(
+          app,
+          div(
+            { class: "container" },
+            header,
+            entryCard,
+            mainContent,
+            pageFooter
+          ),
+          lockScreen,
+          resetModal,
+          syncModal
+        );
+      });
 
       window.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;

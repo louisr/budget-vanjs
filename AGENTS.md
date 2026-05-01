@@ -1,6 +1,6 @@
 # Budget Dashboard — Agent Guide
 
-A single-page Budget Dashboard built with [VanJS](https://vanjs.org/), hosted on GitHub Pages. The app is fully static: no backend, no build step. All user data lives in browser `localStorage`, encrypted client-side with a user-supplied password.
+A single-page Budget Dashboard built with [VanJS](https://vanjs.org/), hosted on GitHub Pages. The app is fully static: no backend, no build step. All user data lives in the browser (IndexedDB, with a one-time migration from legacy `localStorage`), encrypted client-side with a user-supplied password.
 
 ## Repository Layout
 - `docs/index.html` — entire app: markup, inline CSS, and the inline ES module that holds all logic. This is the document root served by Live Server and (when configured) GitHub Pages.
@@ -31,21 +31,27 @@ There is no `package.json`, bundler, or test runner. Edit `docs/index.html` dire
 
 ## Encryption
 - **Outer vault**: PBKDF2(SHA-256, 600 000 iterations) → AES-GCM 256, derived from the user's password + a per-vault random salt.
-- Storage key: `localStorage["budgetDashboardEncrypted"]`.
-- Stored payload shape:
+- **Storage backend**: IndexedDB database `budget-dashboard`, object store `vault`, record key `current` of shape `{ name: "current", payload: <envelope> }`. A legacy `localStorage["budgetDashboardEncrypted"]` copy is read as a fallback and migrated into IndexedDB on the next successful unlock (and then deleted). The envelope shape is unchanged from v1, so backup `.json` files remain interchangeable.
+- Stored envelope shape:
   ```json
   { "v": 1, "salt": "<base64>", "iv": "<base64>", "data": "<base64 ciphertext>" }
   ```
-- `persistEncrypted()` is a no-op if `sessionKey` is missing — safe to call from anywhere.
-- `unlockWithPassword()` decrypts, then calls `setAppState()` and removes the `auth-modal-open` class.
+- IndexedDB helpers: `openVaultDb`, `idbGet`, `idbPut`, `idbDelete`, plus high-level `loadStoredVault`, `writeStoredVault`, `clearStoredVault`, `hasStoredVault`. Always use the high-level wrappers from app code so the legacy-localStorage fallback stays consistent.
+- `persistEncrypted()` is a no-op if `sessionKey` is missing — safe to call from anywhere. It writes via `writeStoredVault`, which also deletes any leftover legacy `localStorage` entry.
+- `unlockWithPassword()` calls `loadStoredVault()` (IDB → legacy fallback), decrypts, calls `setAppState()`, and removes the `auth-modal-open` class. If the vault came from the legacy localStorage path, it re-persists immediately so subsequent loads use IndexedDB.
 - The password is **never** stored. Losing it means losing the data; surface this in any new flows.
 - **Inner secret envelope**: the Plaid secret is stored inside the decrypted config as `plaidSecretEnc = { iv, data }` (base64), encrypted with `sessionKey` via `encryptString` / `decryptString`. The plaintext secret is intentionally never assigned to a `van.state`. It is decrypted only inside `handleSyncSubmit` when the user re-enters their password (the sync modal), used for the Plaid call, then dropped.
 - `migrateConfig()` upgrades any legacy `config.plaidSecret` (plaintext field) into a `plaidSecretEnc` envelope on the next unlock, then re-persists.
-- If you change PBKDF2 parameters, AES mode, or the inner-envelope shape, bump `v` and add a migration path in `unlockWithPassword` / `migrateConfig`.
+- If you change PBKDF2 parameters, AES mode, or the envelope shape, bump `v` and add a migration path in `unlockWithPassword` / `migrateConfig`. The IndexedDB schema version (currently `1`) is separate from the envelope `v` and is bumped via `indexedDB.open(idbName, <version>)`'s `onupgradeneeded`.
+
+## Storage capacity
+- IndexedDB quota is browser- and disk-dependent (commonly hundreds of MB to several GB), so the previous ~5 MB `localStorage` ceiling no longer applies.
+- The Settings page surfaces `navigator.storage.estimate()` and offers a "Request persistent storage" button (`navigator.storage.persist()`) so users can opt into eviction protection.
+- The vault is currently written as a single record. If individual encrypt/decrypt operations become too large, chunk transactions (e.g. one record per year keyed `tx:<year>`) before introducing OPFS.
 
 ## Backup / Restore
-- Export: `exportEncryptedData()` writes the raw `localStorage` payload to a `.json` download.
-- Restore: `handleRestoreFile()` validates the schema (`v === 1`, `salt`/`iv`/`data` strings) before overwriting `localStorage`. Restore-page errors must use `restoreError`, not `authError`.
+- Export: `exportEncryptedData()` reads the envelope via `loadStoredVault()` and writes it to a `.json` download.
+- Restore: `handleRestoreFile()` validates the schema (`v === 1`, `salt`/`iv`/`data` strings) before writing it via `writeStoredVault()` (which also clears the legacy localStorage key). Restore-page errors must use `restoreError`, not `authError`.
 
 ## Conventions
 - Single file, inline styles. Keep selectors scoped via class names; avoid global tag rules beyond what already exists.

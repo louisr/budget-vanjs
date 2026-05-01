@@ -4,9 +4,11 @@ Manual smoke tests for `docs/index.html`, served at `http://localhost:5500/`.
 Each section lists the page, what should be on it, and the flows that originate
 there. Steps are intentionally narrow so an issue can be pinpointed.
 
-> **Reset between flows**: open DevTools → Application → Local Storage and
-> delete `budgetDashboardEncrypted` (or run the **Reset** flow below) before
-> repeating from Flow 1.
+> **Reset between flows**: open DevTools → Application → IndexedDB →
+> `budget-dashboard` → `vault` and delete the `current` record (or run the
+> **Reset** flow below) before repeating from Flow 1. If a legacy
+> `localStorage["budgetDashboardEncrypted"]` entry exists from before the
+> IndexedDB migration, delete that too.
 
 ---
 
@@ -72,14 +74,15 @@ there. Steps are intentionally narrow so an issue can be pinpointed.
 - If a secret is already encrypted, a muted note appears under the secret field: "An encrypted secret is saved. Leave blank to keep it; type a new value to replace it."
 - Standing note: "The Plaid secret is encrypted at rest with a separate envelope and is only decrypted in memory at sync time…"
 - **Save settings** button (primary).
-- **Reset settings / data** button (secondary danger).
+- **Reset Dashboard** button (secondary danger), shown on the same row as **Save settings** and right-aligned.
+- **Storage** section below the form: usage estimate from `navigator.storage.estimate()` and a **Request persistent storage** button (replaced with a confirmation line once persistence is granted).
 
 **Flows**
 - 4a. Submit empty form → required-field validation prevents submit.
 - 4b. Submit valid name + client ID + secret → saves config, navigates back to `#/` (dashboard now shows transactions card; Flow 8).
 - 4c. Toggle theme → background switches; persists across reload (after re-unlocking).
 - 4d. Click **Back to dashboard** → returns to `#/`.
-- 4e. Click **Reset settings / data** → opens reset modal (Flow 9).
+- 4e. Click **Reset Dashboard** → opens reset modal (Flow 9).
 - 4f. (Second visit) Save with secret left blank → keeps existing `plaidSecretEnc`.
 
 ---
@@ -108,7 +111,7 @@ there. Steps are intentionally narrow so an issue can be pinpointed.
 **Flows**
 - 6a. Restore without choosing a file → inline warning "Choose a backup file to restore."
 - 6b. Restore with a malformed/wrong-schema file → inline warning "Invalid backup file." File input is cleared.
-- 6c. Restore with a valid backup → `localStorage` overwritten, lock screen opens in *unlock* mode (Flow 5) for the restored vault's password.
+- 6c. Restore with a valid backup → vault is written to IndexedDB, lock screen opens in *unlock* mode (Flow 5) for the restored vault's password. After successful unlock the URL switches from `#/restore/` to `#/`.
 - 6d. Click **Cancel** → returns to `#/`.
 
 ---
@@ -147,7 +150,7 @@ there. Steps are intentionally narrow so an issue can be pinpointed.
 - Buttons: **Confirm reset**, **Download backup**, **Close** (header).
 
 **Flows**
-- 9a. Click **Confirm reset** → clears `localStorage`, closes modal & lock screen, returns to landing (Flow 1).
+- 9a. Click **Confirm reset** → clears the IndexedDB vault (and any leftover legacy `localStorage` entry), closes modal & lock screen, returns to landing (Flow 1).
 - 9b. Click **Download backup** → triggers a `.json` download of the current encrypted payload.
 - 9c. Click **Close** or press **Esc** → dismisses modal without changes.
 - 9d. Click backdrop → dismisses modal.
@@ -174,4 +177,4 @@ there. Steps are intentionally narrow so an issue can be pinpointed.
 - **CSP / console**: every page should load with no console errors.
 - **Theme**: dark mode persists across unlock/reload (it's stored inside the encrypted payload).
 - **Persistence**: every state-changing action triggers `persistEncrypted()`; reload + unlock should restore identical state.
-- **Plaid secret never serialized in plaintext**: after saving, inspect `localStorage` payload (decrypt with DevTools if needed) to confirm only `plaidSecretEnc` is present, never `plaidSecret`.
+- **Plaid secret never serialized in plaintext**: after saving, inspect the IndexedDB `vault.current` payload (decrypt with DevTools if needed) to confirm only `plaidSecretEnc` is present, never `plaidSecret`.
