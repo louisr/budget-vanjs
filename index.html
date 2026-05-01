@@ -5,6 +5,73 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Budget Dashboard - VanJS Hello</title>
     <meta name="description" content="VanJS hello world for a budget dashboard.">
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, serif;
+        background: #f6f2ec;
+        color: #1c1c1c;
+        transition: background 200ms ease, color 200ms ease;
+      }
+
+      body.dark {
+        background: #0f1216;
+        color: #f3f1ec;
+      }
+
+      .container {
+        min-height: 100vh;
+        padding: 2.5rem;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .card {
+        margin-top: 2rem;
+        padding: 1.5rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+        transition: background 200ms ease, border-color 200ms ease;
+      }
+
+      body.dark .card {
+        background: rgba(20, 24, 30, 0.9);
+        border-color: rgba(255, 255, 255, 0.08);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      }
+
+      .toggle {
+        border: 0;
+        border-radius: 999px;
+        padding: 0.6rem 1.2rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: #1c1c1c;
+        color: #f6f2ec;
+        transition: transform 150ms ease, background 200ms ease, color 200ms ease;
+      }
+
+      body.dark .toggle {
+        background: #f6f2ec;
+        color: #1c1c1c;
+      }
+
+      .toggle:hover {
+        transform: translateY(-1px);
+      }
+    </style>
   </head>
   <body>
     <main id="app"></main>
@@ -12,15 +79,31 @@
     <script type="module">
       import van from "https://cdn.jsdelivr.net/gh/vanjs-org/van/public/van-1.6.0.min.js"
       
-      const { div, h1, p } = van.tags;
+      const { button, div, h1, p } = van.tags;
       const app = document.getElementById("app");
+      const isDark = van.state(false);
+
+      const toggleTheme = () => {
+        isDark.val = !isDark.val;
+        document.body.classList.toggle("dark", isDark.val);
+      };
 
       van.add(
         app,
         div(
-          { style: "font-family: Georgia, serif; padding: 2rem;" },
-          h1("Hello, VanJS!"),
-          p("Your budget dashboard starts here.")
+          { class: "container" },
+          div(
+            { class: "toolbar" },
+            h1("Hello, VanJS!"),
+            button(
+              { class: "toggle", onclick: toggleTheme },
+              () => (isDark.val ? "Light mode" : "Dark mode")
+            )
+          ),
+          div(
+            { class: "card" },
+            p("Your budget dashboard starts here.")
+          )
         )
       );
     </script>
