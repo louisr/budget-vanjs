@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Budget Dashboard - VanJS Hello</title>
+    <meta name="description" content="VanJS hello world for a budget dashboard.">
+  </head>
+  <body>
+    <main id="app"></main>
+
+    <script type="module">
+      import van from "https://cdn.jsdelivr.net/npm/vanjs-core@1.5.2/dist/van.min.js";
+
+      const { div, h1, p } = van.tags;
+      const app = document.getElementById("app");
+
+      van.add(
+        app,
+        div(
+          { style: "font-family: Georgia, serif; padding: 2rem;" },
+          h1("Hello, VanJS!"),
+          p("Your budget dashboard starts here.")
+        )
+      );
+    </script>
+  </body>
+</html>
