@@ -230,10 +230,6 @@
         z-index: 100;
       }
 
-      body.modal-open .settings-modal {
-        display: grid;
-      }
-
       body.reset-modal-open .reset-modal {
         display: grid;
       }
@@ -386,7 +382,34 @@
       }
 
       .file-input {
-        font-size: 0.9rem;
+        font-size: 0.95rem;
+        color: inherit;
+      }
+
+      .file-input::file-selector-button {
+        padding: 0.5rem 1rem;
+        margin-right: 0.75rem;
+        border-radius: 6px;
+        border: 1px solid currentColor;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        font-weight: 500;
+      }
+
+      .file-input::file-selector-button:hover {
+        background: rgba(0, 0, 0, 0.05);
+      }
+
+      body.dark .file-input::file-selector-button:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .file-picker-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
       }
     </style>
   </head>
@@ -572,6 +595,10 @@
         document.body.classList.remove(authModalClass);
         hasEncrypted.val = true;
         authError.val = "";
+        // After unlocking from a transient route (e.g. restore), land on the dashboard.
+        if (route.val === "restore") {
+          window.location.hash = "#/";
+        }
       };
 
       const createVault = async (password) => {
@@ -606,6 +633,18 @@
           route.val = "about";
         } else if (hash.startsWith("#/restore")) {
           route.val = "restore";
+        } else if (hash.startsWith("#/settings")) {
+          // Settings requires a vault. Redirect to dashboard if none exists.
+          if (!hasEncrypted.val) {
+            window.location.hash = "#/";
+            return;
+          }
+          route.val = "settings";
+          const current = config.val;
+          firstName.val = current?.firstName || "";
+          plaidClientId.val = current?.plaidClientId || "";
+          // Never repopulate the plaintext secret. Empty input means "keep existing".
+          plaidSecret.val = "";
         } else {
           route.val = "dashboard";
         }
@@ -615,16 +654,11 @@
       window.addEventListener("hashchange", syncRouteFromHash);
 
       const openSettings = () => {
-        const current = config.val;
-        firstName.val = current?.firstName || "";
-        plaidClientId.val = current?.plaidClientId || "";
-        // Never repopulate the plaintext secret. Empty input means "keep existing".
-        plaidSecret.val = "";
-        document.body.classList.add("modal-open");
+        window.location.hash = "#/settings";
       };
 
       const closeSettings = () => {
-        document.body.classList.remove("modal-open");
+        window.location.hash = "#/";
       };
 
       const handleConfigSubmit = async (event) => {
@@ -744,24 +778,48 @@
         sessionSalt = null;
         document.body.classList.remove(resetModalClass);
         document.body.classList.remove(authModalClass);
+        config.val = null;
+        data.val = { transactions: [], lastSync: null };
+        firstName.val = "";
+        plaidClientId.val = "";
+        plaidSecret.val = "";
         hasEncrypted.val = false;
         passwordInput.val = "";
         confirmPasswordInput.val = "";
         authError.val = "";
+        if (window.location.hash !== "#/") {
+          window.location.hash = "#/";
+        } else {
+          route.val = "dashboard";
+        }
         initializeAuth();
       };
 
+      const closeAuthModal = () => {
+        document.body.classList.remove(authModalClass);
+        passwordInput.val = "";
+        confirmPasswordInput.val = "";
+        authError.val = "";
+      };
+
       const openCreateModal = () => {
+        passwordInput.val = "";
+        confirmPasswordInput.val = "";
+        authError.val = "";
         authMode.val = "create";
         document.body.classList.add(authModalClass);
       };
 
       const openUnlockModal = () => {
+        passwordInput.val = "";
+        confirmPasswordInput.val = "";
+        authError.val = "";
         authMode.val = "unlock";
         document.body.classList.add(authModalClass);
       };
 
       const restoreError = van.state("");
+      const restoreFileName = van.state("");
 
       const handleRestoreFile = async (event) => {
         const file = event.target.files?.[0];
@@ -789,6 +847,7 @@
           restoreError.val = "Invalid backup file.";
         } finally {
           event.target.value = "";
+          restoreFileName.val = "";
         }
       };
 
@@ -835,92 +894,83 @@
         }
       };
 
-      const settingsModal = div(
-        { class: "modal-backdrop settings-modal", onclick: closeSettings },
+      const settingsPage = () => div(
+        { class: "card stack" },
         div(
-          {
-            class: "modal stack",
-            role: "dialog",
-            "aria-modal": "true",
-            onclick: (event) => event.stopPropagation()
-          },
+          { class: "card-header" },
+          h2("Settings"),
           div(
-            { class: "modal-header" },
-            h2("Settings"),
-            div(
-              { class: "card-header-right" },
-              button({ class: "secondary", type: "button", onclick: exportEncryptedData }, "Export data"),
-              button({ class: "secondary", type: "button", onclick: closeSettings }, "Close")
-            )
+            { class: "card-header-right" },
+            () => config.val
+              ? button({ class: "secondary", type: "button", onclick: exportEncryptedData }, "Export data")
+              : null,
+            button({ class: "secondary", type: "button", onclick: closeSettings }, "Back to dashboard")
+          )
+        ),
+        button(
+          { class: "toggle", type: "button", onclick: toggleTheme },
+          () => (isDark.val ? "Light mode" : "Dark mode")
+        ),
+        van.tags.form(
+          { class: "stack", onsubmit: handleConfigSubmit },
+          div(
+            { class: "field" },
+            label({ for: "first-name" }, "First name"),
+            input({
+              id: "first-name",
+              name: "first-name",
+              type: "text",
+              placeholder: "Jordan",
+              required: true,
+              value: () => firstName.val,
+              oninput: (event) => firstName.val = event.target.value
+            })
           ),
           div(
-            { class: "stack" },
+            { class: "field" },
+            label({ for: "plaid-client-id" }, "Plaid client ID"),
+            input({
+              id: "plaid-client-id",
+              name: "plaid-client-id",
+              type: "text",
+              placeholder: "client-id",
+              required: true,
+              value: () => plaidClientId.val,
+              oninput: (event) => plaidClientId.val = event.target.value
+            })
+          ),
+          div(
+            { class: "field" },
+            label({ for: "plaid-secret" }, "Plaid secret"),
+            input({
+              id: "plaid-secret",
+              name: "plaid-secret",
+              type: "password",
+              placeholder: () => config.val?.plaidSecretEnc
+                ? "Leave blank to keep existing encrypted secret"
+                : "secret",
+              required: () => !config.val?.plaidSecretEnc,
+              value: () => plaidSecret.val,
+              oninput: (event) => plaidSecret.val = event.target.value
+            }),
+            () => config.val?.plaidSecretEnc
+              ? p({ class: "muted-small" }, "An encrypted secret is saved. Leave blank to keep it; type a new value to replace it.")
+              : null
+          ),
+          p(
+            { class: "muted-small" },
+            "The Plaid secret is encrypted at rest with a separate envelope and is only decrypted in memory at sync time — you will be asked for your password each sync."
+          ),
+          div(
+            { class: "row", style: "justify-content: space-between; gap: 2rem;" },
+            button({ class: "primary", type: "submit" }, "Save settings"),
             button(
-              { class: "toggle", type: "button", onclick: toggleTheme },
-              () => (isDark.val ? "Light mode" : "Dark mode")
-            ),
-            van.tags.form(
-              { class: "stack", onsubmit: handleConfigSubmit },
-              div(
-                { class: "field" },
-                label({ for: "first-name" }, "First name"),
-                input({
-                  id: "first-name",
-                  name: "first-name",
-                  type: "text",
-                  placeholder: "Jordan",
-                  required: true,
-                  value: () => firstName.val,
-                  oninput: (event) => firstName.val = event.target.value
-                })
-              ),
-              div(
-                { class: "field" },
-                label({ for: "plaid-client-id" }, "Plaid client ID"),
-                input({
-                  id: "plaid-client-id",
-                  name: "plaid-client-id",
-                  type: "text",
-                  placeholder: "client-id",
-                  required: true,
-                  value: () => plaidClientId.val,
-                  oninput: (event) => plaidClientId.val = event.target.value
-                })
-              ),
-              div(
-                { class: "field" },
-                label({ for: "plaid-secret" }, "Plaid secret"),
-                input({
-                  id: "plaid-secret",
-                  name: "plaid-secret",
-                  type: "password",
-                  placeholder: () => config.val?.plaidSecretEnc
-                    ? "Leave blank to keep existing encrypted secret"
-                    : "secret",
-                  required: () => !config.val?.plaidSecretEnc,
-                  value: () => plaidSecret.val,
-                  oninput: (event) => plaidSecret.val = event.target.value
-                }),
-                () => config.val?.plaidSecretEnc
-                  ? p({ class: "muted-small" }, "An encrypted secret is saved. Leave blank to keep it; type a new value to replace it.")
-                  : null
-              ),
-              p(
-                { class: "muted-small" },
-                "The Plaid secret is encrypted at rest with a separate envelope and is only decrypted in memory at sync time — you will be asked for your password each sync."
-              ),
-              button({ class: "primary", type: "submit" }, "Save settings")
-            ),
-            div(
-              { class: "row" },
-              button(
-                {
-                  class: "secondary danger",
-                  type: "button",
-                  onclick: openResetModal
-                },
-                "Reset settings / data"
-              )
+              {
+                class: "secondary danger",
+                type: "button",
+                onclick: openResetModal
+              },
+              "Reset Dashboard"
             )
           )
         )
@@ -984,7 +1034,7 @@
                 oninput: (event) => syncPasswordInput.val = event.target.value
               })
             ),
-            () => syncError.val ? p({ class: "warning" }, syncError.val) : null,
+            () => syncError.val ? p({ class: "warning" }, syncError.val) : p({ class: "warning", style: "display:none" }),
             div(
               { class: "row" },
               button(
@@ -1006,24 +1056,26 @@
         div(
           { class: "header-actions" },
           config.val ? span({ class: "welcome-inline" }, `Welcome, ${config.val.firstName}!`) : null,
-          button(
-            {
-              class: "icon-button",
-              type: "button",
-              onclick: openSettings,
-              "aria-label": "Open settings"
-            },
-            svg.svg(
-              { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
-              svg.path({
-                d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
-                stroke: "currentColor",
-                "stroke-width": "1.5",
-                "stroke-linecap": "round",
-                "stroke-linejoin": "round"
-              })
-            )
-          )
+          hasEncrypted.val
+            ? button(
+                {
+                  class: "icon-button",
+                  type: "button",
+                  onclick: openSettings,
+                  "aria-label": "Open settings"
+                },
+                svg.svg(
+                  { viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+                  svg.path({
+                    d: "M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm8.25 3.75a6.2 6.2 0 0 0-.1-1.1l2-1.55-1.9-3.3-2.4.8a7 7 0 0 0-1.9-1.1l-.4-2.5h-3.8l-.4 2.5a7 7 0 0 0-1.9 1.1l-2.4-.8-1.9 3.3 2 1.55a6.2 6.2 0 0 0 0 2.2l-2 1.55 1.9 3.3 2.4-.8a7 7 0 0 0 1.9 1.1l.4 2.5h3.8l.4-2.5a7 7 0 0 0 1.9-1.1l2.4.8 1.9-3.3-2-1.55c.07-.36.1-.73.1-1.1Z",
+                    stroke: "currentColor",
+                    "stroke-width": "1.5",
+                    "stroke-linecap": "round",
+                    "stroke-linejoin": "round"
+                  })
+                )
+              )
+            : null
         )
       );
 
@@ -1083,7 +1135,7 @@
             button({ class: "primary", type: "button", onclick: openSettings }, "Open settings")
           );
 
-      const entryCard = () => !hasEncrypted.val
+      const entryCard = () => (!hasEncrypted.val && route.val === "dashboard")
         ? div(
             { class: "card stack" },
             h2("Get started"),
@@ -1105,7 +1157,7 @@
             ),
             p({ class: "muted" }, "Already have a backup? Use Restore a dashboard.")
           )
-        : null;
+        : div();
 
       const aboutPage = () => div(
         { class: "card stack" },
@@ -1119,14 +1171,20 @@
         { class: "card stack" },
         h2("Restore a dashboard"),
         p("Restore a dashboard from a downloaded file."),
-        input({
-          id: "restore-file-visible",
-          class: "file-input",
-          type: "file",
-          accept: "application/json",
-          onchange: () => restoreError.val = ""
-        }),
-        () => restoreError.val ? p({ class: "warning" }, restoreError.val) : null,
+        div(
+          { class: "file-picker-row" },
+          input({
+            id: "restore-file-visible",
+            class: "file-input",
+            type: "file",
+            accept: "application/json",
+            onchange: (event) => {
+              restoreError.val = "";
+              restoreFileName.val = event.target.files?.[0]?.name || "";
+            }
+          })
+        ),
+        () => restoreError.val ? p({ class: "warning" }, restoreError.val) : p({ class: "warning", style: "display:none" }),
         div(
           { class: "row" },
           button(
@@ -1145,9 +1203,15 @@
       );
 
       const mainContent = () => {
-        if (route.val === "about") return aboutPage();
-        if (route.val === "restore") return restorePage();
-        if (!hasEncrypted.val) return null;
+        // Read all states the body might branch on so VanJS tracks them
+        // regardless of which branch we take this render.
+        const r = route.val;
+        const unlocked = hasEncrypted.val;
+        void config.val;
+        if (r === "about") return aboutPage();
+        if (r === "restore") return restorePage();
+        if (!unlocked) return div();
+        if (r === "settings") return settingsPage();
         return dashboard();
       };
 
@@ -1194,7 +1258,7 @@
                   })
                 )
               : null,
-            () => authError.val ? p({ class: "muted" }, authError.val) : null,
+            () => authError.val ? p({ class: "warning" }, authError.val) : p({ class: "warning", style: "display:none" }),
             () => authMode.val === "unlock"
               ? div(
                   { class: "row" },
@@ -1221,7 +1285,7 @@
                     {
                       class: "secondary",
                       type: "button",
-                      onclick: () => document.body.classList.remove(authModalClass)
+                      onclick: closeAuthModal
                     },
                     "Cancel"
                   )
@@ -1239,7 +1303,6 @@
           mainContent,
           pageFooter
         ),
-        settingsModal,
         lockScreen,
         resetModal,
         syncModal
@@ -1251,15 +1314,13 @@
           closeSyncModal();
         } else if (document.body.classList.contains(resetModalClass)) {
           closeResetModal();
-        } else if (document.body.classList.contains("modal-open")) {
-          closeSettings();
         } else if (
           document.body.classList.contains(authModalClass) &&
           authMode.val === "create" &&
           hasEncrypted.val === false
         ) {
           // allow cancelling create flow only when no vault yet has been chosen
-          document.body.classList.remove(authModalClass);
+          closeAuthModal();
         }
       });
     </script>

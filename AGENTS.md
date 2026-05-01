@@ -3,29 +3,31 @@
 A single-page Budget Dashboard built with [VanJS](https://vanjs.org/), hosted on GitHub Pages. The app is fully static: no backend, no build step. All user data lives in browser `localStorage`, encrypted client-side with a user-supplied password.
 
 ## Repository Layout
-- `index.html` — entire app: markup, inline CSS, and the inline ES module that holds all logic.
-- `CNAME` — custom domain for GitHub Pages.
+- `docs/index.html` — entire app: markup, inline CSS, and the inline ES module that holds all logic. This is the document root served by Live Server and (when configured) GitHub Pages.
+- `docs/CNAME` — custom domain for GitHub Pages.
+- `.vscode/settings.json` — pins Live Server's root to `/docs`.
 - `AGENTS.md` — this file.
 
-There is no `package.json`, bundler, or test runner. Edit `index.html` directly.
+There is no `package.json`, bundler, or test runner. Edit `docs/index.html` directly.
 
 ## Local Development
-- Serve the directory over HTTP (the inline module imports VanJS via `https://`, and `crypto.subtle` requires a secure context). A simple option:
+- The recommended workflow is the VS Code Live Server extension; it is configured (via `.vscode/settings.json`) to serve from `docs/`.
+- Alternatively, serve the `docs/` directory over HTTP yourself (the inline module imports VanJS via `https://`, and `crypto.subtle` requires a secure context):
   ```bash
-  python3 -m http.server 5500
+  python3 -m http.server 5500 --directory docs
   ```
 - Open `http://localhost:5500/`. There is no hot reload — refresh the page after edits.
 - The CSP `meta` tag allows scripts only from `'self'` and `https://cdn.jsdelivr.net`. If you add another CDN, update the CSP.
 
 ## Architecture
 - **State**: VanJS `van.state` for `route`, `isUnlocked`, `authMode`, `hasEncrypted`, `config`, `data`, theme, and form fields. The derived session `sessionKey` / `sessionSalt` are module-scoped variables (never serialized).
-- **Routing**: hash-based — `#/` (dashboard), `#/restore/` (restore flow), `#about` (about page). `syncRouteFromHash` runs on load and on `hashchange`.
-- **UI tree**: `header`, `entryCard`, `mainContent` (route switch), `pageFooter`, plus four overlays toggled via body classes:
-  - `modal-open` → settings modal
+- **Routing**: hash-based — `#/` (dashboard), `#/settings` (settings), `#/restore/` (restore flow), `#about` (about page). `syncRouteFromHash` runs on load and on `hashchange` and is also responsible for repopulating settings form fields when entering `#/settings`.
+- **UI tree**: `header`, `entryCard`, `mainContent` (route switch), `pageFooter`, plus three overlays toggled via body classes:
   - `reset-modal-open` → reset confirmation modal
   - `sync-modal-open` → Plaid sync password prompt
   - `auth-modal-open` → lock screen (create / unlock)
-- **Reactivity**: prefer function children (`() => ...`) over `van.derive(...)` returning DOM when a node depends on a state, to keep re-renders local and avoid replacing input nodes (which would reset focus / file selections).
+- Modals are reserved for confirmations (reset) and re-auth prompts (sync, unlock). Editing flows live on dedicated routes (e.g. `#/settings`).
+- **Reactivity**: prefer function children (`() => ...`) over `van.derive(...)` returning DOM when a node depends on a state, to keep re-renders local and avoid replacing input nodes (which would reset focus / file selections). When a function child branches on multiple states, read each `state.val` unconditionally at the top so VanJS tracks every dependency, not just the ones taken on the first render.
 
 ## Encryption
 - **Outer vault**: PBKDF2(SHA-256, 600 000 iterations) → AES-GCM 256, derived from the user's password + a per-vault random salt.
@@ -53,7 +55,7 @@ There is no `package.json`, bundler, or test runner. Edit `index.html` directly.
 - Do not introduce build tooling or `npm` dependencies without a strong reason; the project's value proposition is "open the file and it works."
 
 ## Verifying Changes
-After editing `index.html`:
+After editing `docs/index.html`:
 1. Reload the local server page.
 2. Confirm the browser console is free of CSP, parsing, or VanJS errors.
 3. Smoke-test the affected flow: create vault → settings (save name + Plaid creds + secret) → sync (re-enter password) → export → reset → restore → unlock.
